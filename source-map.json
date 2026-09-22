@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "toolId": "xbrd",
+  "sourceClassification": "native-mypowertools-module",
+  "sourceNote": "The XBRD tool is authored in this repository: the module package template, the Avalonia Surface, and both Service Units are new code. Nothing is vendored from an upstream product repository. The esp32-screen checkout exposed as the xbrdRepoRoot setting is an external runtime dependency (the publisher endpoint and local collection scripts are called at run time, or replace their legacy scheduled producers), not a captured source snapshot.",
+  "originalSnapshotPath": null,
+  "selectedEntries": [],
+  "currentIntegrationSnapshot": "current-integration",
+  "currentIntegrationGlobs": [
+    "modules/xbrd/**",
+    "src/Xbrd.Surface/**",
+    "src/Xbrd.Mem.Service/**",
+    "src/Xbrd.CodexQuota.Service/**"
+  ]
+}

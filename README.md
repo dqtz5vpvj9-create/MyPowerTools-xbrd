@@ -139,8 +139,17 @@ Disable-ScheduledTask -TaskName 'XBRD Codex Quota Trigger' -TaskPath '\'
 
 - 本仓（submodule）remote 为 GitHub `MyPowerTools-xbrd`；改完提交并推送，再在 MPT 主仓更新
   `tools/xbrd` 指针。
-- MPT 主仓注册：`scripts/build-all-tools.ps1` 的 `xbrd` 条目（Surface + 两个 ServiceUnit）。
-  产物落在 `artifacts/tools/xbrd/<version>/`（已被 `scripts/artifacts-policy.json` 的 `tools/*/*` 覆盖）。
-- 完整发布还需要 `scripts/publish-windows.ps1` 的 `$packageByTool` 加入 `'xbrd' = 'xbrd'`，
-  以及 `scripts/materialize-tool-submodules.ps1` / `scripts/verify-release-candidate.ps1` 的工具清单，
-  否则 build-provenance / 发布候选校验不会把本工具算进去（见 CONTRACT.md 第 9 节）。
+- MPT 主仓注册（均已就位）：
+  - `scripts/build-all-tools.ps1` 的 `xbrd` 条目（Surface + 两个 ServiceUnit）；
+    产物落在 `artifacts/tools/xbrd/<version>/`（已被 `scripts/artifacts-policy.json` 的 `tools/*/*` 覆盖）。
+  - `scripts/publish-windows.ps1` 的 `$packageByTool`（`'xbrd' = 'xbrd'`，进 build-provenance）。
+  - `scripts/verify-release-candidate.ps1`（`$expectedTools` / `$expectedServiceUnits` / 两个计数）、
+    `scripts/verify-release-candidate.remote.ps1`（A5.R4 列表与计数）。
+  - `scripts/materialize-tool-submodules.ps1`、`scripts/create-source-bundle.ps1`、
+    `.github/workflows/ci.yml`、`scripts/ci-local/Invoke-WindowsCi.ps1` 的工具清单。
+- 本仓 `source-map.json`（`sourceClassification: native-mypowertools-module`，
+  `originalSnapshotPath: null`）满足 ci.yml / Invoke-WindowsCi 对
+  `tool-release.json` + `source-map.json` 的成对要求。
+- 遗留（非本工具范围）：`materialize-tool-submodules.ps1` 读 `bundleManifest.tools.id`，而
+  `create-source-bundle.ps1` 写 `tools[].toolId`，且前者要求 bundle 内每个工具有 `original-source/`；
+  该脚本与当前 bundle 生产者对不上，详见 CONTRACT.md 第 9 节第 6 条。

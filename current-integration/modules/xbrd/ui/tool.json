@@ -72,9 +72,6 @@
     }
   ],
   "permissions": [],
-  "dataRoots": [
-    "%LOCALAPPDATA%/MyPowerTools/state/tools/xbrd"
-  ],
   "dataRetention": "preserve",
   "development": {
     "loose": true,

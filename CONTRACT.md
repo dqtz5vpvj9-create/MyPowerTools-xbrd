@@ -28,8 +28,22 @@
 **2026-09 修正（A 包与集成）**：route 的 `source` 与 `allowedOrigins` 由字面量改成 `${settings.*}`
 token，默认值与原来完全一致。原因：`settings.panelUrl` / `settings.publisherUrl` 已冻结为设置 key，
 若 route 写死字面量，用户在设置里改地址对面板 Tab 无效（设置项变成死配置）。
-`ToolRegistry.ToDescriptor` 在加载时会用模块根的 `settings.json` 展开 token，展开失败会让整个模块
-加载失败，所以 `build.ps1` 现在校验「tool.json 里出现的每个 `${settings.x}` 都在值文件里有非空值」。
+
+代码依据：
+- `src/MyPowerTools.Runtime/ToolRegistry.cs:217` 在**注册期**就用模块根的 `settings.json` 展开
+  `runtime.endpoint` 的 `${settings.*}`；route 的 `surface.source` 同一函数里展开（`ToolRegistry.cs:165`）。
+  展开失败会让整个模块加载失败，所以 `build.ps1` 校验「tool.json 里出现的每个 `${settings.x}`
+  都在值文件里有非空值」。
+- `ShellWorkspaceController.ExternalTools.cs:309-334`：settings 值文件缺失/读不到时，Shell 抛
+  `Required tool setting '<x>' is missing. Open Settings and configure it first.`。因此 CLI 能拿到
+  HTTP 200 就证明 `../settings.json` 这条 values 路径确实被解析到了。
+- `ui/tool.json` 里的 settings 路径写成 `../settings.json` / `../settings.schema.json` 能工作，
+  只是因为 `ToolRegistry.ResolveToolValue`（`ToolRegistry.cs:265-278`）只做
+  `Path.GetFullPath(Path.Combine(toolDirectory, value))`：**当前实现没有越界（escape）检查**，
+  不是文档认可的通用写法，别照抄到别的工具。
+
+注意 `module.json` 的 http entrypoint `baseUrl` 无法使用 token（模块清单没有设置展开机制），
+改发布器地址时必须同时改那里，见第 9 节。
 
 注意 `module.json` 的 http entrypoint `baseUrl` 无法使用 token（模块清单没有设置展开机制），
 改发布器地址时必须同时改那里，见第 9 节。
@@ -224,17 +238,34 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 3. **命令 id 不得以 `.refresh` / `.open-external` 结尾**：web route 会过滤
    （`ShellWorkspaceController.ExternalTools.cs:47-49`）。
 4. **`ui/settings.json` 是 UI surface，不是设置值**；值文件在模块根（第 3 节）。
+   另：`ui/tool.json` **不声明 `dataRoots`**。`ToolRegistry.ResolveToolValue` 对非绝对 URI 只做
+   `Path.Combine(toolDirectory, value)`，**不展开 `%LOCALAPPDATA%`**，写 `%LOCALAPPDATA%/...` 会得到
+   `<toolDir>\%LOCALAPPDATA%\...` 这种错误路径。数据根的真实声明在两个 `unit-manifest.json`
+   的 `dataRoots`（由 ServiceManager 校验）。
 5. **首次引入 Service Unit 必须先让 unit 目录存在于安装布局**
    `%LOCALAPPDATA%\Programs\MyPowerTools\service-units\<unitId>`，
    否则 `update-windows-dev.ps1` 的 overlay 会抛
    `Installed service unit is missing for overlay`。处理步骤见 README「首次引入新 Service Unit 的坑」。
-6. **完整发布还需要 MPT 主仓三处清单**（本次未改，属发布负责人范围，A 已报告）：
-   - `scripts/publish-windows.ps1` 的 `$packageByTool` 加 `'xbrd' = 'xbrd'`
-     （否则 `build-provenance.json` 不含本工具）；
-   - `scripts/materialize-tool-submodules.ps1` 的 `$toolIds` 加 `'xbrd'`；
-   - `scripts/verify-release-candidate.ps1` 的 `$expectedTools` 加 `'xbrd'`（并相应调整
-     `A5.3-loadable-surfaces` / `A5.7-local-runner-discovery` 的期望计数）。
-   不注册只影响完整发布/发布候选校验，不影响 `build-all-tools.ps1 -ToolId xbrd` 与 dev overlay。
+6. **发布/CI 工具清单已注册（2026-09，A，Lead 批准）**：
+   - `scripts/publish-windows.ps1` 的 `$packageByTool`：`'xbrd' = 'xbrd'`（进 `build-provenance.json`）；
+   - `scripts/build-all-tools.ps1` 的 registry：`xbrd` 条目 + 两个 `ServiceUnits`
+     （`xbrd.mem.service` / `xbrd.codex-quota.service`）；
+   - `scripts/verify-release-candidate.ps1`：`$expectedTools` 加 `xbrd`，
+     `$expectedServiceUnits` 加两个 unit，`A5.3-loadable-surfaces` 9→10，
+     `A5.7-local-runner-discovery` 列表加 `xbrd` 且计数 10→11；
+   - `scripts/verify-release-candidate.remote.ps1`：`A5.R4-installed-catalog-discovery` 列表加 `xbrd`
+     且计数 7→8（`A5.R2`/`A5.R3` 是动态枚举，无需改）；
+   - `scripts/materialize-tool-submodules.ps1` 的 `$toolIds`、`scripts/create-source-bundle.ps1` 的
+     `$toolIds`、`.github/workflows/ci.yml` 与 `scripts/ci-local/Invoke-WindowsCi.ps1` 的
+     「Verify tool submodules」列表：加 `xbrd`；
+   - 本仓新增 `source-map.json`（`sourceClassification: native-mypowertools-module`，
+     `originalSnapshotPath: null`），满足 ci.yml / Invoke-WindowsCi 对 `tool-release.json` +
+     `source-map.json` 的成对要求。
+   遗留（非 xbrd 范围）：`materialize-tool-submodules.ps1` 读的是 `bundleManifest.tools.id`，
+   而 `create-source-bundle.ps1` 写的是 `tools[].toolId`，且它要求每个工具在 bundle 里有
+   `original-source/`（`xbrd`、`screenshot` 都没有 upstream 快照）——该脚本与当前 bundle 生产者
+   对不上，A 已报告 Lead。
+
 7. **本机动作不进 tool.json**：采集、打开验证窗口、立即发布、重启 unit、看日志需要本机进程/服务控制，
    Surface 按钮实现（B）；所有进程启动必须 `UseShellExecute=false` + `CreateNoWindow=true`
    或 `-NoNewWindow`（AGENTS.md）。
