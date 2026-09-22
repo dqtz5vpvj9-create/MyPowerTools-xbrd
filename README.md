@@ -87,6 +87,32 @@ pwsh.exe -NoLogo -NoProfile -NonInteractive -File scripts\build-all-tools.ps1 -T
 pwsh.exe -NoLogo -NoProfile -NonInteractive -File scripts\Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd
 ```
 
+## 自动化激活陷阱（验证用，2026-09-22 V 的方法学发现）
+
+`--surface-activation` 是 **Shell / `MyPowerTools.Shell.Avalonia.exe`（及 `MyPowerTools.exe`）的参数**，
+`MyPowerTools.Cli.exe` **没有**这个参数（传给它只会打印 help）。
+用 PowerShell 的 `Start-Process -ArgumentList @('--surface-activation', $json)` 会**剥掉 JSON 里的引号**，
+`ToolActivationProtocol.Deserialize` 抛 `JsonException` → 返回 `null` → 静默退化成
+`ShellActivationRequest.FocusShell`：**退出码 0、窗口弹出但不导航**，看起来「成功」其实什么都没打开
+（`Shell.Avalonia/Program.cs:25-38`）。正确做法二选一：
+
+```powershell
+$shell = "$env:LOCALAPPDATA\Programs\MyPowerTools\Shell\MyPowerTools.Shell.Avalonia.exe"
+$json  = '{"ToolId":"xbrd","RouteId":"sources","ActivationUri":"mypowertools://activate/xbrd/sources"}'
+
+# 1) 直接调用（PowerShell 单引号字符串，本次验证用的就是这种）
+& $shell --surface-activation $json
+
+# 2) 需要 Start-Process 时，用 ProcessStartInfo.ArgumentList（不经过引号剥离）
+$psi = [System.Diagnostics.ProcessStartInfo]::new($shell)
+$psi.UseShellExecute = $false
+$psi.ArgumentList.Add('--surface-activation'); $psi.ArgumentList.Add($json)
+[void][System.Diagnostics.Process]::Start($psi)
+```
+
+转发成功时新进程会通过命名管道把请求交给已运行的 Shell 后退出；判断是否真的导航，
+不能只看退出码，要看窗口内容/子窗口（本工具的验证就是这么做的）。
+
 ## 契约自检（只读，不构建主仓）
 
 ```powershell
@@ -112,8 +138,17 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 - **web route 的 WebBridge**：宿主支持 `command.invoke` / `settings.get` / `secrets.get` /
   `navigation.openExternal`（实现见 `ShellWorkspaceController.ExternalWebBridge.cs`），页面 origin 必须在
   `ui/tool.json` 的 `allowedOrigins` 里。但**本工具的面板 Tab 加载的是路由器返回的原始 JSON，页面里没有
-  任何脚本**，所以实际不会调用 WebBridge；两条命令的日常入口是命令面板（下表第二列）。
-- **命令面板**：走 `commands.index.json` 的 `http.request`，由模块 http entrypoint 执行。
+  任何脚本**，所以实际不会调用 WebBridge。
+- **可达性（2026-09-22 复核，详见 CONTRACT 第 4 节表）**：
+  - 工具页 / WebBridge / `ui/tool.json` commands：**可用**；
+  - `commands.index.json` 静态索引 + 包级 `validate contracts`：**可用**（`commands=7`）；
+    在**含本包的 modules root**（开发版安装布局）下 `mpt run xbrd.health` 返回
+    `succeeded: HTTP 200 {...source_count:9...}`；但在仓库 `F:\repo\MyPowerTools\modules` 下会报
+    `Command 'xbrd.health' was not found.`——那是该目录**没有 xbrd 包**（`build-all-tools.ps1 -ToolId xbrd`
+    没跑过），不是命令实现有问题；
+  - **Shell 命令面板里是否出现/可执行这两条命令 = UNCERTAIN（未实测）**；
+  - `state\modules\xbrd` / transport `indexed` 对本工具不是必要条件（本模块只有 `kind: http` facade，
+    没有运行时入口）。补齐方案见 CONTRACT 第 9 节第 10 条。
 - 命令 id 不得以 `.refresh` / `.open-external` 结尾（web route 会过滤，
   `ExternalTools.cs`）。`remote-http` 传输本身不会被 Shell 的 palette 路径识别为 HTTP，
   所以索引里必须显式写 `http.request`。
@@ -136,6 +171,15 @@ Disable-ScheduledTask -TaskName 'XBRD Codex Quota Trigger' -TaskPath '\'
 
 `quota.proxy` / `quota.mes` 仍由 `\XBRD\XBRD UI Quota Worker` 每日任务发布，本工具只做观测与手动触发，
 不做迁移。
+
+### 迁移现状（2026-09-22 17:2x，Lead 已执行）
+
+- `\XBRD\XBRD Windows MEM Source`、`\XBRD Codex Quota Worker`、`\XBRD Codex Quota Trigger`
+  三个计划任务已 **Disabled**；
+- Codex 的 Stop hook 已从 `~/.codex/hooks.json` 移除，备份在 `~/.codex/hooks.json.bak-xbrd-20260922`；
+- 此后 `quota.mem` / `quota.codex` 只由 `xbrd.mem.service` / `xbrd.codex-quota.service` 发布；
+- **回滚路径**：重新启用上述三个任务 + 从 `hooks.json.bak-xbrd-20260922` 恢复 hooks，然后停掉对应 unit。
+- `\XBRD\XBRD UI Quota Worker`（quota.proxy / quota.mes）**未动**，仍按原计划运行。
 
 ## git / 发布闭环
 

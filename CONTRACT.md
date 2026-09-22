@@ -116,6 +116,24 @@ Secret（只此一个，预留）：`routerToken`。当前路由器发布 API **
 `commands.index.json` 另含两条 navigation 命令：`xbrd.open.panel` → route `panel`，
 `xbrd.open.sources` → route `sources`。
 
+### 可达性真相（2026-09-22，V 实测 + A 复验修正）
+
+V 用 CLI 实测得到「`mpt run` 找不到 xbrd、`module list` 无 xbrd、`state\modules\xbrd` 不存在」。
+A 复验后确认：**前两项是 modules root 布局差异，不是执行机制问题**（A 在仓库 root 下原样复现了 V 的
+三条输出，在开发版安装布局下 `mpt run xbrd.health` 成功）；第三项是预期行为。三条路径不要混为一谈：
+
+| 路径 | 状态 | 证据 |
+|---|---|---|
+| 工具页 / WebBridge `command.invoke` / `ui/tool.json` commands | **可用** | 上表第 1 行；A 用 `--surface-activation` 打开两个 Tab 并截图（sources Tab 渲染 9 行来源 + 面板数据预览卡） |
+| `commands.index.json` 静态索引 + 包级 `validate contracts` | **可用** | `validate contracts` → `commands=7`；在**装了本包的 modules root**（开发版 `%LOCALAPPDATA%\Programs\MyPowerTools`）下 `mpt run xbrd.health` → `succeeded: HTTP 200 {"ok":true,...,"source_count":9,...}` exit 0 |
+| `mpt run` / `mpt module list` 在**仓库 `F:\repo\MyPowerTools\modules`** 下 | **不可用，但原因是布局** | 该目录里没有 xbrd 包（`build-all-tools.ps1 -ToolId xbrd` 从未把包 materialize 到那里）：`run xbrd.health` → `failed: Command 'xbrd.health' was not found.` exit 1，`module list` 无 xbrd（A 原样复现 V 的输出；V 未记录所用 modules root）。开发版布局下 `module list` 显示 `xbrd enabled stopped`（对比 screenshot/screenease 的 `enabled indexed`） |
+| Shell 命令面板里是否出现/可执行 xbrd 命令 | **UNCERTAIN（未实测）** | 调色板读 Runner 命令索引，而该索引在开发版布局下**包含**静态索引命令（`mpt run` 已证）；Shell UI 是否展示、点击后走哪条执行路径需实测，不得据此断言 |
+| `state\modules\xbrd` 目录 | **不存在（符合预期）** | `CreateModuleContext`（`MptHostRuntime.cs:1588-1590`）只为有**运行时入口**（inproc-dotnet / jsonrpc-stdio / grpc-ipc / package-runtime）的模块创建；`kind: http` facade 不算运行时入口 |
+
+结论：本工具的命令走「Shell 直连 HTTP + 静态索引」路径，**不依赖模块运行时**。因此不要把
+`state\modules\<id>` 或 transport `indexed` 当成这类命令的必要条件；反过来，也不要因为在仓库
+`modules\` 下 `mpt run` 失败就断言命令不可用——那是包没被构建到该目录。
+
 **不放进 tool.json 的动作**（它们需要本机进程/服务控制，HTTP 路径表达不了）由 sources Tab 的
 Surface 按钮实现，归属 B：
 
@@ -244,10 +262,12 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`，`BreakawayProcessStarter.cs:117`�
 
 1. `pwsh -File build.ps1 -MyPowerToolsRepoRoot F:\repo\MyPowerTools` 退出码 0，`artifacts/package` 就位。
 2. `Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd` 成功，开发版 Shell 启动。
-3. 工具卡片出现；`panel` Tab 内嵌路由器面板；`sources` Tab 渲染来源清单。
-4. 系统 › 服务 页出现 `xbrd.mem.service` 与 `xbrd.codex-quota.service`（active）。
-5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 由本工具更新，且**没有**双写
-   （迁移期必须先停掉对应计划任务/常驻 worker，见 README）。
+3. 工具卡片出现；`panel`（面板数据）Tab 内嵌设备原始 panel JSON（只读，见第 2 节）；`sources` Tab
+   渲染来源清单 + 「面板数据预览」卡。
+4. 系统 › 服务 页出现 `xbrd.mem.service` 与 `xbrd.codex-quota.service`（active）；
+   `%LOCALAPPDATA%\MyPowerTools\state\<unitId>.heartbeat` 两份单行小文件存在并随 tick 前进。
+5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 的 `age_s` 由两个 unit 的 tick 驱动
+   （旧生产者已于 2026-09-22 17:2x 由 Lead 停用，见 README「迁移注意」；此后不应再有第三方写入）。
 6. 仓库内无明文密钥；`routerToken` 走 MPT Secret Store。
 7. （2026-09 追加，A）包必须通过官方校验，两条都退出码 0：
 
@@ -256,6 +276,17 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate tools\xbrd\artifacts\package --s
 artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\package --schemas schemas
 # 期望：package: valid / contract: xbrd state=running commands=7 surfaces=4 dashboard=True settings=static-surface logs=ok
 ```
+
+注意：`validate contracts` 是**包级校验器**，它自己会真打 `/health`，`state=running`、`commands=7`
+只代表「包 + 静态索引 + facade 健康」成立，**不代表 Runner 已把模块登记为 transport indexed**
+（见第 4 节「可达性真相」）。`state\modules\xbrd` 不存在是预期。
+
+8. （2026-09-22，V 实测 + A 复验）命令可达性以第 4 节表为准：
+   - 工具页 / WebBridge / `mpt run`（**在含本包的 modules root 下**）/ `validate contracts` 都已通过；
+   - 在仓库 `F:\repo\MyPowerTools\modules` 下 `mpt run xbrd.health` 失败是**布局问题**（那里没有 xbrd 包），
+     验收时不要用它判定命令实现；
+   - **Shell 命令面板是否展示 xbrd 命令 = UNCERTAIN（未实测）**，不得断言可用或不可用；
+   - `state\modules\xbrd` / transport `indexed` 对本工具**不是**验收条件。
 
 ## 9. 已知约束与平台边界（2026-09，A 核实）
 
@@ -320,3 +351,18 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
    input-monitor / doubao-agent / smartbird-thermostat，未登记 `tool.xbrd`，于是工具卡片回退成
    title 首字母 `X屏`。若要显示专用 glyph，需要在 Shell 里加一行
    `"tool.xbrd" => "XB"` 并重编 Shell；**成本高于收益，本次不改 Shell**，仅作为后续项记录。
+
+10. **后续项：模块级注册 / 命令面板确定可见（2026-09-22，Lead 提出，A 记录）**。
+    现状（第 4 节「可达性真相」）：命令已通过 Shell/WebBridge 与静态索引两条路径可用，
+    `mpt run` 在含本包的布局下也成功；缺的只是「模块被 Runner 登记为 transport indexed」与
+    `state\modules\xbrd` 目录，以及 Shell 命令面板可见性尚未实测。若要补齐，两条候选：
+    - **(a) 给模块加真实运行时入口**：例如一个极小的 `jsonrpc-stdio`（或 `inproc-dotnet`）命令宿主，
+      把两条 HTTP 命令实现为模块命令。可获得 transport 索引 + `state\modules\xbrd` + 面板按钮。
+      代价是多一个要随包发布/维护的进程与协议。
+    - **(b) 用 `execution.activation` 让调色板只做导航**：`docs/sdk/commands-events-logs.md:5` 的官方模式——
+      在 `commands.index.json` 里给命令加嵌套 `execution.activation = { "type": "navigation", "toolId": "xbrd",
+      "routeId": "sources" }`（保留外层执行契约），调色板通用导航到 sources Tab，真正的动作仍由
+      Surface 按钮/HTTP 完成。**仍需实测**「命令面板是否读取无运行时模块的静态索引」，否则等于把
+      UNCERTAIN 换个位置。
+    现阶段两条都不是必需项：第 4 节表里 `execution.type = "http.request"` 的静态索引路径在 `mpt run`
+    下已验证可用。
