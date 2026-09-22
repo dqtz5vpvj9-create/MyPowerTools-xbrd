@@ -569,3 +569,18 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
     交互事实不是状态，不得进时间线；时间线只记录**状态迁移**（source 的 `status`/`effective_status`/
     `revision`/`age_s` 变化）。否则时间线被操作噪声淹没，真正要排障的降级链路反而找不到。
     同理：点击的即时反馈留在按钮/Toast 上，不进日志与事件流。
+
+14. **AXAML 改动的验收前置：必须实例化 View + attach DataContext（2026-09-22，A3，Lead 决定）**。
+    只测 ViewModel 的 headless 用例**抓不到 XAML 加载期的类型转换错误**。活例（本轮实测）：
+    `<x:Double x:Key="MptSpacingM">12</x:Double>`（`src/MyPowerTools.UI/Themes/MptSpacing.axaml:8`）
+    被用在 `Margin="{DynamicResource MptSpacingM}"`（`XbrdSourcesView.axaml:615`，查看快照抽屉），
+    运行期抛 `InvalidCastException: Unable to cast object of type 'System.Double' to type
+    'Avalonia.Thickness'`，整个 sources Tab 变成「XBRD 来源与配额暂时无法加载 + 重试」——
+    而当时 ViewModel 级 35 项用例全绿。
+
+    规则：**凡是改动 AXAML 的提交，headless 验收必须包含至少一条「new 该 View + attach 对应
+    ViewModel/DataContext + 触发一次加载/布局」的用例**；只有 ViewModel 覆盖不作为通过依据。
+    同类风险 token：`Double` 误用于 `Margin`/`Padding`/`BorderThickness`（Thickness）、
+    `Brush`/`Color`、`FontWeight`、`GridLength`（`RowDefinitions`/`ColumnDefinitions`）等。
+    （A 侧可选加固：`build.ps1` 里做一次 AXAML 静态扫描，把 `(Margin|Padding|BorderThickness)="{DynamicResource X}"`
+    与 `MptSpacing*` 这类 Double token 交叉校验；本轮未做，记后续。）

@@ -612,7 +612,7 @@
               Width="620"
               HorizontalAlignment="Right"
               VerticalAlignment="Stretch"
-              Margin="{DynamicResource MptSpacingM}">
+              Margin="12">
         <DockPanel>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
             <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">

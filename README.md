@@ -153,6 +153,25 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
 期望：`package: valid` 与 `contract: xbrd state=running commands=7 surfaces=4 dashboard=True settings=static-surface logs=ok`。
 
+### 改 AXAML 的验收前置（2026-09-22 踩坑结论）
+
+**凡是改动 AXAML 的提交，headless 验收必须包含至少一条「`new` 该 View + attach 对应
+ViewModel/DataContext + 触发一次加载/布局」的用例**；只有 ViewModel 覆盖不算通过。
+
+活例：`XbrdSourcesView.axaml:615`（查看快照抽屉）把
+`<x:Double x:Key="MptSpacingM">12</x:Double>`（`src/MyPowerTools.UI/Themes/MptSpacing.axaml:8`）
+用在了 `Margin="{DynamicResource MptSpacingM}"`，运行期抛
+
+```
+XBRD 来源与配额暂时无法加载
+Unable to cast object of type 'System.Double' to type 'Avalonia.Thickness'.
+```
+
+整个 sources Tab 变成错误页，而当时 ViewModel 级 35 项用例全绿——因为异常发生在**视图加载**阶段
+（style/DynamicResource 类型转换），只测 VM 根本走不到。同类风险：`Double` 误用于
+`Margin`/`Padding`/`BorderThickness`、`Brush`/`Color`、`FontWeight`、`GridLength` 等 token。
+详见 CONTRACT 第 9 节第 14 条。
+
 ## 命令在哪执行（为什么 tool.json 只有 2 个命令）
 
 `ShellWorkspaceController.ExternalTools.cs` 里外部工具命令只有三条路径：`.open-external` 后缀开浏览器、
