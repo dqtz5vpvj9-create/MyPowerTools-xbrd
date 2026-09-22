@@ -325,7 +325,7 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 | `quota.mem` | `xbrd.mem.service`（**唯一生产者**） | 本机 `10.33.0.145` · `Go-http-client/1.1` |
 | `quota.codex` | `xbrd.codex-quota.service` **+ 已知第二生产者**（VMware 虚机 ubuntu，MAC `00:0c:29:c7:f0:91`） | 本机 `10.33.0.145` · `Go-http-client/1.1`；VM `10.33.0.171` |
 | `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | 路由器 cron | `192.168.29.79` |
-| `quota.proxy` / `quota.mes` | UI Quota Worker（本机；已改为每 4 小时调度） | `10.33.0.145` · `Python-urllib/3.12` |
+| `quota.proxy` / `quota.mes` | UI Quota Worker（本机；计划任务**每日 03:30**，`-EveryHours 3\|4\|6` 为可选加密频率开关，默认不变） | `10.33.0.145` · `Python-urllib/3.12` |
 
 实测计数（同一 24h 窗口）：`quota.codex` 的写入 = 18 × `10.33.0.171` + 3 × `10.33.0.145`。
 

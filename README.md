@@ -301,9 +301,20 @@ quota.codex 写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:
 ### 本轮其它已交付事实（2026-09-22）
 
 - `quota.mes` / `quota.proxy`（MES/TAG）已修：**TAG `left=411G` 解析修正**（旧实现把 total 当 left）、
-  错误分类不再把 `parse_rejected` 写成 CF、tag/mes 并行 + step-gui 布局指纹缓存
-  （**34s → 9.4–15.3s**）、调度由每日 03:30 改为**每 4 小时**；
+  错误分类不再把 `parse_rejected` 写成 CF、tag/mes 并行 + step-gui 布局指纹缓存（**34s → 9.4–15.3s**）；
 - 这两个源在路由器侧仍是**零能力**（动作在 MPT 本地：立即采集 / 打开验证窗口），与 CONTRACT §8.9 一致。
+
+#### UI Quota Worker 调度 = 每日 03:30（2026-09-22 定稿）
+
+用户明确要求 **MES/TAG 保持每日 03:30**（中途试过「每 4 小时」，已由 D 回滚）。实测计划任务状态：
+`\XBRD\XBRD UI Quota Worker` = **1 个 Daily trigger 03:30**、`NextRunTime=2026-09-23 03:30`、
+`RestartCount=3` / `RestartInterval=PT15M` 保留。
+
+`scripts/xbrd-install-ui-quota-worker.ps1` 新增的 `-EveryHours 3|4|6` 与 `-StartAt` 是**可选**的频率开关，
+**默认仍是每日 03:30**（不传即保持原样）。
+
+为什么每日一次够用：`quota.proxy` / `quota.mes` 的 `ttl_s=172800`（**48h**），单次成功即可覆盖整个周期；
+失败时任务自身重试 **3 次 × 15min**；MPT 侧还有 sources Tab 的「立即采集 / 打开验证窗口」可手动补。
 
 ## git / 发布闭环
 
