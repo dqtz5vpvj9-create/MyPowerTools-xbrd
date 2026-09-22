@@ -1,0 +1,27 @@
+{
+  "schemaVersion": "1.0",
+  "surfaceId": "xbrd.detail",
+  "moduleId": "xbrd",
+  "kind": "detail-page",
+  "layout": {
+    "mode": "component"
+  },
+  "uses": [
+    "MptModuleHeader",
+    "MptStatusPill",
+    "MptMetricGrid",
+    "MptTimeline",
+    "MptDiagnosticPanel",
+    "MptErrorView",
+    "MptLoadingView"
+  ],
+  "states": [
+    "loading",
+    "ready",
+    "empty",
+    "degraded",
+    "error",
+    "permission-required",
+    "disabled"
+  ]
+}

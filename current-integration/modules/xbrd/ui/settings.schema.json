@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "publisherUrl": {
+      "type": "string",
+      "default": "http://ow.lixinrui000.cn:8080"
+    },
+    "panelUrl": {
+      "type": "string",
+      "default": "http://ow.lixinrui000.cn:8080/panel"
+    },
+    "xbrdRepoRoot": {
+      "type": "string",
+      "default": "C:\\Users\\lixinrui\\repo\\esp32-screen"
+    },
+    "connectionTimeoutMs": {
+      "type": "integer",
+      "minimum": 100,
+      "default": 5000
+    },
+    "autoRefresh": {
+      "type": "boolean",
+      "default": true
+    },
+    "enableMemSource": {
+      "type": "boolean",
+      "default": true
+    },
+    "memIntervalSeconds": {
+      "type": "integer",
+      "minimum": 5,
+      "default": 300
+    },
+    "enableCodexSource": {
+      "type": "boolean",
+      "default": true
+    },
+    "codexIntervalSeconds": {
+      "type": "integer",
+      "minimum": 5,
+      "default": 300
+    },
+    "routerToken": {
+      "type": "string",
+      "x-mpt-secret": true
+    }
+  }
+}

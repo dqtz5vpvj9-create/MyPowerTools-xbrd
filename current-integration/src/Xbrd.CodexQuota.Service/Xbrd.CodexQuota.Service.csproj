@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Xbrd.CodexQuota.Service</AssemblyName>
+    <RootNamespace>Xbrd.CodexQuota.Service</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Description>
+      XBRD Codex quota source Service Unit (xbrd.codex-quota.service). Reads the Codex
+      rate limits through MyPowerTools.Platform.Abstractions.CodexQuotaReader and publishes
+      quota.codex source snapshots to the router publisher. Replaces the three overlapping
+      producers (logon-trigger pythonw worker, Codex Stop hook, 5-minute trigger task).
+    </Description>
+    <MyPowerToolsRepoRoot Condition="'$(MyPowerToolsRepoRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\..\..</MyPowerToolsRepoRoot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(MyPowerToolsRepoRoot)\src\MyPowerTools.Platform.Abstractions\MyPowerTools.Platform.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

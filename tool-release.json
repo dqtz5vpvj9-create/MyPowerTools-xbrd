@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "toolId": "xbrd",
+  "packageId": "xbrd",
+  "version": "0.1.0",
+  "moduleIds": [
+    "xbrd"
+  ],
+  "surface": {
+    "project": "current-integration/src/Xbrd.Surface/Xbrd.Surface.csproj",
+    "assembly": "Xbrd.Surface.dll",
+    "stagedAs": "surface/Xbrd.Surface.dll"
+  },
+  "package": {
+    "template": "current-integration/modules/xbrd",
+    "output": "artifacts/package"
+  },
+  "serviceUnits": [
+    {
+      "unitId": "xbrd.mem.service",
+      "project": "current-integration/src/Xbrd.Mem.Service/Xbrd.Mem.Service.csproj",
+      "manifest": "current-integration/src/Xbrd.Mem.Service/unit-manifest.json"
+    },
+    {
+      "unitId": "xbrd.codex-quota.service",
+      "project": "current-integration/src/Xbrd.CodexQuota.Service/Xbrd.CodexQuota.Service.csproj",
+      "manifest": "current-integration/src/Xbrd.CodexQuota.Service/unit-manifest.json"
+    }
+  ],
+  "buildScript": "build.ps1"
+}

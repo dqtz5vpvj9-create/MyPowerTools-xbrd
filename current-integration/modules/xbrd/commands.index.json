@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.0",
+  "commands": [
+    {
+      "id": "xbrd.open.panel",
+      "title": "打开 XBRD 面板",
+      "subtitle": "内嵌路由器管理页",
+      "kind": "open",
+      "category": "XBRD",
+      "execution": {
+        "type": "navigation",
+        "toolId": "xbrd",
+        "routeId": "panel"
+      }
+    },
+    {
+      "id": "xbrd.open.sources",
+      "title": "打开 XBRD 来源与配额",
+      "subtitle": "9 个信息来源的状态与 TTL 健康",
+      "kind": "open",
+      "category": "XBRD",
+      "execution": {
+        "type": "navigation",
+        "toolId": "xbrd",
+        "routeId": "sources"
+      }
+    }
+  ]
+}

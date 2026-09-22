@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Xbrd.Mem.Service</AssemblyName>
+    <RootNamespace>Xbrd.Mem.Service</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Description>
+      XBRD memory source Service Unit (xbrd.mem.service). Publishes quota.mem source
+      snapshots to the router publisher on a fixed interval, supervised by
+      MyPowerTools.ServiceManager. Replaces the per-5-minute scheduled task that
+      started a fresh wscript/powershell process on every tick.
+    </Description>
+  </PropertyGroup>
+</Project>

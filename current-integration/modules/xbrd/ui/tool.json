@@ -1,0 +1,150 @@
+{
+  "schemaVersion": "1.0",
+  "version": "0.1.0",
+  "toolId": "xbrd",
+  "ownerModuleId": "xbrd",
+  "title": "XBRD 屏幕",
+  "description": "XBRD 圆屏的面板与信息来源健康：查看每个来源的状态与 TTL，管理两个常驻采集服务。",
+  "icon": "tool.external",
+  "category": "设备与面板",
+  "type": "dotnet-surface",
+  "availability": "available",
+  "primaryRouteId": "panel",
+  "routes": [
+    {
+      "routeId": "panel",
+      "surfaceId": "xbrd.panel",
+      "title": "面板",
+      "icon": "route.overview",
+      "surface": {
+        "kind": "web",
+        "source": "http://ow.lixinrui000.cn:8080/panel",
+        "openExternal": true,
+        "allowedOrigins": [
+          "http://ow.lixinrui000.cn:8080"
+        ]
+      }
+    },
+    {
+      "routeId": "sources",
+      "surfaceId": "xbrd.sources",
+      "title": "来源与配额",
+      "icon": "diagnostics",
+      "surface": {
+        "kind": "dotnet",
+        "assembly": "surface/Xbrd.Surface.dll",
+        "type": "Xbrd.Surface.XbrdSurfaceFactory"
+      }
+    }
+  ],
+  "homeCard": {
+    "summary": "面板可达性、来源 TTL 健康、配额采集器与两个常驻服务。",
+    "primaryActionLabel": "打开面板",
+    "statusBinding": "module.status",
+    "order": 60
+  },
+  "runtime": {
+    "transport": "none"
+  },
+  "settings": {
+    "schema": "settings.schema.json",
+    "values": "settings.json",
+    "secrets": [
+      "routerToken"
+    ]
+  },
+  "commands": [
+    {
+      "id": "xbrd.health",
+      "title": "检查面板与来源健康",
+      "description": "探测路由器发布器的 /health。",
+      "method": "GET",
+      "path": "/health"
+    },
+    {
+      "id": "xbrd.sources.reload",
+      "title": "重新读取来源清单",
+      "description": "读取 /api/v1/sources 并刷新来源表。",
+      "method": "GET",
+      "path": "/api/v1/sources"
+    },
+    {
+      "id": "xbrd.quota.collect-now",
+      "title": "立即采集 UI 配额",
+      "description": "立即运行 UI Quota Worker（TAG/MESL），不等每日 03:30。",
+      "kind": "action",
+      "dangerLevel": "low",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.quota.open-challenge",
+      "title": "打开配额验证窗口",
+      "description": "打开专用 Edge CDP profile，人工完成 Cloudflare/GeeTest 验证。",
+      "kind": "action",
+      "dangerLevel": "low",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.mem.publish-now",
+      "title": "立即发布内存来源",
+      "description": "向路由器发布一次 quota.mem 快照。",
+      "kind": "action",
+      "dangerLevel": "low",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.codex.publish-now",
+      "title": "立即发布 Codex 配额",
+      "description": "向路由器发布一次 quota.codex 快照。",
+      "kind": "action",
+      "dangerLevel": "low",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.mem.restart",
+      "title": "重启内存来源服务",
+      "description": "重启 Service Unit xbrd.mem.service。",
+      "kind": "action",
+      "dangerLevel": "medium",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.codex.restart",
+      "title": "重启 Codex 配额服务",
+      "description": "重启 Service Unit xbrd.codex-quota.service。",
+      "kind": "action",
+      "dangerLevel": "medium",
+      "execution": {
+        "type": "module.execute"
+      }
+    },
+    {
+      "id": "xbrd.logs.tail",
+      "title": "查看 XBRD 采集日志",
+      "description": "列出采集器与服务的日志位置。",
+      "kind": "action",
+      "execution": {
+        "type": "module.execute"
+      }
+    }
+  ],
+  "permissions": [],
+  "dataRoots": [
+    "%LOCALAPPDATA%/MyPowerTools/state/tools/xbrd"
+  ],
+  "dataRetention": "preserve",
+  "development": {
+    "loose": true,
+    "autoRefresh": false
+  }
+}
