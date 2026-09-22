@@ -1,0 +1,437 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:MyPowerTools.UI.Controls"
+             xmlns:vm="using:Xbrd.Surface.ViewModels"
+             x:Class="Xbrd.Surface.Views.XbrdSourcesView"
+             x:DataType="vm:XbrdSourcesViewModel">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="{DynamicResource MptPagePadding}"
+                Spacing="{DynamicResource MptSpacingL}"
+                MaxWidth="1600"
+                HorizontalAlignment="Stretch">
+
+      <!-- ── 顶部聚合状态 ───────────────────────────────────────────────── -->
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+        <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+          <TextBlock Classes="MptPageTitle" Text="XBRD 来源与配额" />
+          <TextBlock Classes="MptPageSubtitle"
+                     Text="面板可达性 · 来源 TTL 健康 · 配额采集器与两个常驻服务（最差状态聚合）" />
+        </StackPanel>
+        <StackPanel Grid.Column="1"
+                    Orientation="Horizontal"
+                    Spacing="{DynamicResource MptSpacingS}"
+                    VerticalAlignment="Center">
+          <Border Classes="MptStatusBadge"
+                  Classes.running="{Binding AggregateIsReady}"
+                  Classes.degraded="{Binding AggregateIsDegraded}"
+                  Classes.error="{Binding AggregateIsError}">
+            <TextBlock Classes="MptMeta"
+                       Text="{Binding AggregateHeadline, StringFormat='聚合状态：{0}'}" />
+          </Border>
+          <controls:MptButton Content="刷新"
+                              Command="{Binding RefreshCommand}"
+                              IsEnabled="{Binding !IsBusy}" />
+        </StackPanel>
+      </Grid>
+
+      <Border Classes="MptCard" IsVisible="{Binding ShowsSettingsWarning}">
+        <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+          <TextBlock FontWeight="SemiBold" Text="设置降级" />
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding SettingsWarningText}" />
+        </StackPanel>
+      </Border>
+
+      <!-- ── 三个聚合指标 ───────────────────────────────────────────────── -->
+      <Grid ColumnDefinitions="*,*,*" ColumnSpacing="{DynamicResource MptSpacingM}">
+        <Border Grid.Column="0" Classes="MptCard">
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" Text="面板可达性" />
+            <Border Classes="MptStatusBadge"
+                    Classes.running="{Binding PanelIsReady}"
+                    Classes.degraded="{Binding PanelIsDegraded}"
+                    Classes.error="{Binding PanelIsError}">
+              <TextBlock Text="{Binding PanelLabel}" />
+            </Border>
+            <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding PanelDetail}" />
+            <TextBlock Classes="MptMono" TextWrapping="Wrap" Text="{Binding PanelEndpoint}" />
+            <TextBlock Classes="MptMeta" Text="{Binding PanelCountersText}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="1" Classes="MptCard">
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" Text="来源健康" />
+            <Border Classes="MptStatusBadge"
+                    Classes.running="{Binding SourcesIsReady}"
+                    Classes.degraded="{Binding SourcesIsDegraded}"
+                    Classes.error="{Binding SourcesIsError}">
+              <TextBlock Text="{Binding SourcesLabel}" />
+            </Border>
+            <TextBlock Text="{Binding SourcesSummaryText}" />
+            <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding SourcesMetaText}" />
+            <TextBlock Classes="MptMeta" Text="{Binding LastUpdatedText, StringFormat='更新时间 {0}'}" />
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Column="2" Classes="MptCard">
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" Text="采集服务" />
+            <Border Classes="MptStatusBadge"
+                    Classes.running="{Binding UnitsIsReady}"
+                    Classes.degraded="{Binding UnitsIsDegraded}"
+                    Classes.error="{Binding UnitsIsError}">
+              <TextBlock Text="{Binding UnitsLabel}" />
+            </Border>
+            <TextBlock TextWrapping="Wrap" Text="{Binding UnitsSummaryText}" />
+            <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UnitsDetail}" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- ── 来源清单 ───────────────────────────────────────────────────── -->
+      <Border Classes="MptCard" Padding="{DynamicResource MptNoThickness}">
+        <StackPanel>
+          <Grid ColumnDefinitions="*,Auto"
+                ColumnSpacing="{DynamicResource MptSpacingM}"
+                Margin="{DynamicResource MptUniformL}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+              <TextBlock Classes="MptSectionTitle" Text="来源清单" Margin="{DynamicResource MptNoThickness}" />
+              <TextBlock Classes="MptMeta" Text="{Binding SourcesSummaryText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        Spacing="{DynamicResource MptSpacingS}"
+                        VerticalAlignment="Center">
+              <TextBlock Classes="MptMeta"
+                         VerticalAlignment="Center"
+                         Text="{Binding SnapshotFocusText}" />
+              <controls:MptButton Content="刷新来源" Command="{Binding RefreshCommand}" IsEnabled="{Binding !IsBusy}" />
+            </StackPanel>
+          </Grid>
+
+          <Border Classes="MptInset" IsVisible="{Binding HasSourcesError}" Margin="{DynamicResource MptHorizontalLMargin}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}">
+              <TextBlock FontWeight="SemiBold" Text="来源清单读取失败（已降级显示）" />
+              <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding SourcesErrorText}" />
+            </StackPanel>
+          </Border>
+
+          <Border Classes="MptEmptyState"
+                  IsVisible="{Binding IsSourcesEmpty}"
+                  Margin="{DynamicResource MptHorizontalLMargin}">
+            <TextBlock Classes="MptEmptyState" Text="发布器返回了 0 个来源。" />
+          </Border>
+
+          <!-- 表头 -->
+          <Border Background="{DynamicResource MptBrushSurfaceMuted}" Padding="{DynamicResource MptCompactPadding}">
+            <Grid ColumnDefinitions="1.35*,1.2*,1.05*,1.05*,1.75*,Auto" ColumnSpacing="{DynamicResource MptSpacingS}">
+              <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="来源 / 类型" />
+              <TextBlock Grid.Column="1" Classes="MptMeta" FontWeight="SemiBold" Text="状态" />
+              <TextBlock Grid.Column="2" Classes="MptMeta" FontWeight="SemiBold" Text="TTL 预算" />
+              <TextBlock Grid.Column="3" Classes="MptMeta" FontWeight="SemiBold" Text="最近生成" />
+              <TextBlock Grid.Column="4" Classes="MptMeta" FontWeight="SemiBold" Text="最近错误" />
+              <TextBlock Grid.Column="5" Classes="MptMeta" FontWeight="SemiBold" Text="行内动作" />
+            </Grid>
+          </Border>
+
+          <ItemsControl ItemsSource="{Binding Sources}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:XbrdSourceRowViewModel">
+                <Border BorderBrush="{DynamicResource MptBrushDivider}"
+                        BorderThickness="0,0,0,1"
+                        Padding="{DynamicResource MptCompactPadding}">
+                  <StackPanel Spacing="{DynamicResource MptSpacingS}">
+                    <Grid ColumnDefinitions="1.35*,1.2*,1.05*,1.05*,1.75*,Auto"
+                          ColumnSpacing="{DynamicResource MptSpacingS}">
+                      <StackPanel Grid.Column="0" Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+                        <TextBlock Classes="MptMono" Text="{Binding SourceId}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Classes="MptMeta" Text="{Binding KindText}" />
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <Border Classes="MptStatusBadge"
+                                Classes.running="{Binding IsReady}"
+                                Classes.degraded="{Binding IsDegraded}"
+                                Classes.error="{Binding IsError}">
+                          <TextBlock Classes="MptMeta" Text="{Binding StatusLabel}" />
+                        </Border>
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="2" Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding TtlText}" TextWrapping="Wrap" />
+                        <TextBlock Classes="MptMeta" Text="{Binding TtlDetailText}" />
+                      </StackPanel>
+
+                      <StackPanel Grid.Column="3" Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+                        <TextBlock Classes="MptMono" Text="{Binding GeneratedText}" />
+                        <TextBlock Classes="MptMeta" Text="{Binding AgeText}" />
+                      </StackPanel>
+
+                      <Grid Grid.Column="4" VerticalAlignment="Center">
+                        <TextBlock Foreground="{DynamicResource MptBrushDanger}"
+                                   IsVisible="{Binding HasError}"
+                                   MaxLines="3"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextWrapping="Wrap"
+                                   Text="{Binding ErrorText}" />
+                        <TextBlock Classes="MptMeta" IsVisible="{Binding !HasError}" Text="无" />
+                      </Grid>
+
+                      <StackPanel Grid.Column="5"
+                                  Orientation="Horizontal"
+                                  Spacing="{DynamicResource MptSpacingXs}"
+                                  VerticalAlignment="Center">
+                        <controls:MptButton Content="立即刷新" Command="{Binding RefreshCommand}" />
+                        <controls:MptButton Content="{Binding ManageButtonText}"
+                                            Command="{Binding ManageCommand}"
+                                            IsEnabled="{Binding CanManage}"
+                                            ToolTip.Tip="{Binding ManageHint}" />
+                        <controls:MptButton Content="{Binding SnapshotButtonText}"
+                                            Command="{Binding ShowSnapshotCommand}" />
+                      </StackPanel>
+                    </Grid>
+
+                    <!-- 快照详情（行内展开，无新后端） -->
+                    <Border Classes="MptInset" IsVisible="{Binding IsDetailOpen}">
+                      <StackPanel Spacing="{DynamicResource MptSpacing2Xs}">
+                        <TextBlock FontWeight="SemiBold" Text="快照详情（xbrd.source.summary.v1）" />
+                        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                              ColumnSpacing="{DynamicResource MptSpacingM}"
+                              RowSpacing="{DynamicResource MptSpacing2Xs}">
+                          <TextBlock Grid.Row="0" Classes="MptMeta" Text="source_id" />
+                          <TextBlock Grid.Row="0" Grid.Column="1" Classes="MptMono" Text="{Binding SourceId}" />
+                          <TextBlock Grid.Row="1" Classes="MptMeta" Text="kind / 状态" />
+                          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding KindText}" />
+                          <TextBlock Grid.Row="2" Classes="MptMeta" Text="status 明细" />
+                          <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding StatusLabel}" />
+                          <TextBlock Grid.Row="3" Classes="MptMeta" Text="revision" />
+                          <TextBlock Grid.Row="3" Grid.Column="1" Classes="MptMono" TextWrapping="Wrap" Text="{Binding RevisionText}" />
+                          <TextBlock Grid.Row="4" Classes="MptMeta" Text="generated_at → received_at" />
+                          <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="{DynamicResource MptSpacingS}">
+                            <TextBlock Classes="MptMono" Text="{Binding GeneratedText}" />
+                            <TextBlock Classes="MptMeta" VerticalAlignment="Center" Text="→" />
+                            <TextBlock Classes="MptMono" Text="{Binding ReceivedText}" />
+                          </StackPanel>
+                          <TextBlock Grid.Row="5" Classes="MptMeta" Text="changed_fields" />
+                          <TextBlock Grid.Row="5" Grid.Column="1" Classes="MptMeta" TextWrapping="Wrap" Text="{Binding ChangedFieldsText}" />
+                          <TextBlock Grid.Row="6" Classes="MptMeta" Text="error" />
+                          <TextBlock Grid.Row="6" Grid.Column="1" TextWrapping="Wrap" Text="{Binding ErrorText}" />
+                          <TextBlock Grid.Row="7" Classes="MptMeta" Text="归属" />
+                          <TextBlock Grid.Row="7" Grid.Column="1" TextWrapping="Wrap" Text="{Binding OwnerText}" />
+                          <TextBlock Grid.Row="8" Classes="MptMeta" Text="操作说明" />
+                          <TextBlock Grid.Row="8" Grid.Column="1" Classes="MptMeta" TextWrapping="Wrap" Text="{Binding ManageHint}" />
+                        </Grid>
+                      </StackPanel>
+                    </Border>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <!-- ── 采集器与 Service Unit 状态 ─────────────────────────────────── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingM}">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+              <TextBlock Classes="MptSectionTitle" Text="采集器与 Service Unit" Margin="{DynamicResource MptNoThickness}" />
+              <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UnitsDetail}" />
+            </StackPanel>
+            <controls:MptButton Grid.Column="1"
+                                Content="重启两个服务"
+                                Command="{Binding RestartUnitsCommand}"
+                                IsEnabled="{Binding !IsActionRunning}" />
+          </Grid>
+
+          <Border Classes="MptInset" IsVisible="{Binding HasServiceUnitsError}">
+            <TextBlock TextWrapping="Wrap" Text="{Binding ServiceUnitsErrorText}" />
+          </Border>
+
+          <ItemsControl ItemsSource="{Binding ServiceUnits}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:XbrdServiceUnitRowViewModel">
+                <Border Classes="MptLogRow" Margin="{DynamicResource MptGapBottomXs}">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+                    <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+                      <StackPanel Orientation="Horizontal" Spacing="{DynamicResource MptSpacingS}">
+                        <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" />
+                        <TextBlock Classes="MptMono" VerticalAlignment="Center" Text="{Binding UnitId}" />
+                      </StackPanel>
+                      <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding DetailText}" />
+                      <TextBlock Foreground="{DynamicResource MptBrushDanger}"
+                                 IsVisible="{Binding HasError}"
+                                 TextWrapping="Wrap"
+                                 Text="{Binding LastErrorText}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                Spacing="{DynamicResource MptSpacingXs}"
+                                VerticalAlignment="Center">
+                      <Border Classes="MptStatusBadge"
+                              Classes.running="{Binding IsReady}"
+                              Classes.degraded="{Binding IsDegraded}"
+                              Classes.error="{Binding IsError}">
+                        <TextBlock Classes="MptMeta" Text="{Binding StateLabel}" />
+                      </Border>
+                      <controls:MptButton Content="{Binding ToggleButtonText}"
+                                          Command="{Binding ToggleCommand}"
+                                          IsEnabled="{Binding Installed}" />
+                      <controls:MptButton Content="重启"
+                                          Command="{Binding RestartCommand}"
+                                          IsEnabled="{Binding Installed}" />
+                    </StackPanel>
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- 每日 UI Quota 计划任务 -->
+          <Border Classes="MptLogRow">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+              <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="{DynamicResource MptSpacingS}">
+                  <TextBlock FontWeight="SemiBold" Text="每日 UI Quota 计划任务" />
+                  <TextBlock Classes="MptMono" VerticalAlignment="Center" Text="{Binding UiQuotaTaskName}" />
+                </StackPanel>
+                <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UiQuotaTask.DetailText}" />
+                <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UiQuotaTask.LatestLogText}" />
+                <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UiQuotaTask.TaskToRunText, StringFormat='Task To Run: {0}'}" />
+                <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding UiQuotaTask.LogDirectoryText, StringFormat='日志目录：{0}'}" />
+              </StackPanel>
+              <StackPanel Grid.Column="1"
+                          Orientation="Horizontal"
+                          Spacing="{DynamicResource MptSpacingXs}"
+                          VerticalAlignment="Center">
+                <Border Classes="MptStatusBadge"
+                        Classes.running="{Binding UiQuotaTask.IsReady}"
+                        Classes.degraded="{Binding UiQuotaTask.IsDegraded}"
+                        Classes.error="{Binding UiQuotaTask.IsError}">
+                  <TextBlock Classes="MptMeta" Text="{Binding UiQuotaTask.StateLabel}" />
+                </Border>
+                <TextBlock Classes="MptMeta" VerticalAlignment="Center" Text="{Binding UiQuotaTask.LastResultLabel}" />
+              </StackPanel>
+            </Grid>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- ── 本机动作（tool.json 里没有对应命令） ───────────────────────── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingM}">
+          <TextBlock Classes="MptSectionTitle" Text="本机动作" Margin="{DynamicResource MptNoThickness}" />
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap"
+                     Text="以下动作需要本机进程/服务控制，HTTP 命令表达不了，因此由 Surface 直接执行（不弹控制台窗口）。" />
+
+          <StackPanel Orientation="Horizontal" Spacing="{DynamicResource MptSpacingS}">
+            <controls:MptButton Content="立即采集 UI 配额"
+                                Command="{Binding CollectUiQuotaCommand}"
+                                IsEnabled="{Binding !IsActionRunning}" />
+            <controls:MptButton Content="打开配额验证窗口"
+                                Command="{Binding OpenQuotaWindowCommand}"
+                                IsEnabled="{Binding !IsActionRunning}" />
+            <controls:MptButton Content="重新读取日志"
+                                Command="{Binding RefreshLogsCommand}"
+                                IsEnabled="{Binding !IsActionRunning}" />
+            <controls:MptButton Content="打开日志目录"
+                                Command="{Binding OpenLogsFolderCommand}"
+                                IsEnabled="{Binding !IsActionRunning}" />
+          </StackPanel>
+
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding CollectorPathText, StringFormat='采集入口：{0}'}" />
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding WorkerLogDirectoryText, StringFormat='日志目录：{0}'}" />
+
+          <StackPanel IsVisible="{Binding IsWorking}" Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" Text="{Binding WorkingText}" />
+            <ProgressBar IsIndeterminate="True" HorizontalAlignment="Stretch" />
+          </StackPanel>
+
+          <Border Classes="MptInset" IsVisible="{Binding HasLastActionResult}">
+            <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+              <TextBlock FontWeight="SemiBold" Text="{Binding LastActionTitle}" />
+              <SelectableTextBlock Classes="MptMono" TextWrapping="Wrap" Text="{Binding LastActionResult}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- ── 时间线 / 诊断 ─────────────────────────────────────────────── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingM}">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+              <TextBlock Classes="MptSectionTitle" Text="时间线 / 诊断" Margin="{DynamicResource MptNoThickness}" />
+              <TextBlock Classes="MptMeta" TextWrapping="Wrap"
+                         Text="失败 → 重试 → 降级事件由来源表（age/error）与本机操作推导，不新增后端。" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Classes="MptMeta" VerticalAlignment="Center" Text="{Binding LastUpdatedText, StringFormat='更新 {0}'}" />
+          </Grid>
+
+          <Border Classes="MptEmptyState" IsVisible="{Binding IsTimelineEmpty}">
+            <TextBlock Classes="MptEmptyState" Text="暂无事件。" />
+          </Border>
+
+          <ItemsControl ItemsSource="{Binding Timeline}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:XbrdTimelineEntry">
+                <Border Classes="MptLogRow" Margin="{DynamicResource MptGapBottomXs}">
+                  <Grid ColumnDefinitions="Auto,Auto,*" ColumnSpacing="{DynamicResource MptSpacingS}">
+                    <TextBlock Classes="MptMono" VerticalAlignment="Center" Text="{Binding TimeText}" />
+                    <Border Grid.Column="1"
+                            Classes="MptStatusBadge"
+                            Classes.running="{Binding IsInfo}"
+                            Classes.degraded="{Binding IsWarn}"
+                            Classes.error="{Binding IsError}">
+                      <TextBlock Classes="MptMeta" Text="{Binding LevelLabel}" />
+                    </Border>
+                    <TextBlock Grid.Column="2" TextWrapping="Wrap" VerticalAlignment="Center" Text="{Binding Message}" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </Border>
+
+      <!-- ── 日志 ───────────────────────────────────────────────────────── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingM}">
+          <TextBlock Classes="MptSectionTitle" Text="日志" Margin="{DynamicResource MptNoThickness}" />
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap"
+                     Text="两个 Service Unit 的最近日志（IServiceUnitClient.TailLogsAsync）与 UI Quota Worker 日志文件。" />
+          <Border Classes="MptInset">
+            <SelectableTextBlock Classes="MptMono" TextWrapping="Wrap" Text="{Binding UnitLogText}" />
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- ── 设置（只读诊断） ───────────────────────────────────────────── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+          <TextBlock Classes="MptSectionTitle" Text="设置（只读诊断）" Margin="{DynamicResource MptNoThickness}" />
+          <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding SettingsDiagnosticsText}" />
+          <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto"
+                ColumnSpacing="{DynamicResource MptSpacingM}"
+                RowSpacing="{DynamicResource MptSpacing2Xs}">
+            <TextBlock Grid.Row="0" Classes="MptMeta" Text="publisherUrl" />
+            <TextBlock Grid.Row="0" Grid.Column="1" Classes="MptMono" TextWrapping="Wrap" Text="{Binding PublisherUrlText}" />
+            <TextBlock Grid.Row="1" Classes="MptMeta" Text="panelUrl" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Classes="MptMono" TextWrapping="Wrap" Text="{Binding PanelUrlText}" />
+            <TextBlock Grid.Row="2" Classes="MptMeta" Text="xbrdRepoRoot" />
+            <TextBlock Grid.Row="2" Grid.Column="1" Classes="MptMono" TextWrapping="Wrap" Text="{Binding RepoRootText}" />
+            <TextBlock Grid.Row="3" Classes="MptMeta" Text="connectionTimeoutMs" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding TimeoutText}" />
+            <TextBlock Grid.Row="4" Classes="MptMeta" Text="间隔 / 自动刷新" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding IntervalText}" />
+            <TextBlock Grid.Row="5" Classes="MptMeta" Text="来源开关" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SourcesEnabledText}" />
+            <TextBlock Grid.Row="6" Classes="MptMeta" Text="声明的密钥" />
+            <TextBlock Grid.Row="6" Grid.Column="1" Classes="MptMeta" TextWrapping="Wrap" Text="{Binding SecretsText}" />
+          </Grid>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

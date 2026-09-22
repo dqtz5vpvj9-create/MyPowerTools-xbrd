@@ -14,5 +14,13 @@
     <PackageReference Include="MyPowerTools.ToolSdk" Version="0.2.0" />
     <PackageReference Include="MyPowerTools.AvaloniaSdk" Version="0.2.0" />
     <PackageReference Include="MyPowerTools.UI" Version="0.2.0" />
+    <!--
+      The Surface reads the tool's own settings (publisherUrl / xbrdRepoRoot / …) through the same
+      host contract the Shell uses to expand ${settings.*}: the Runner's tool descriptor points at
+      <toolDir>/ui/settings.json. Read-only; the routerToken secret is never requested or logged.
+      Same dependency set as AdbForwarder.Surface / RemoteNotifications.Surface.
+    -->
+    <PackageReference Include="MyPowerTools.HostControl.Client" Version="0.2.0" />
+    <PackageReference Include="MyPowerTools.Protocol" Version="0.2.0" />
   </ItemGroup>
 </Project>

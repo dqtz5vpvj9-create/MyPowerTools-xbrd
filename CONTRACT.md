@@ -189,6 +189,20 @@ Surface 按钮实现，归属 B：
 v1 用 `readiness: none`（先例：`ddns.service`）。升级到 `pipe`（`xbrd.mem.core` /
 `xbrd.codex-quota.core`）留作后续，需先定业务协议。
 
+#### 停机语义（v1，C 核实平台实现）
+
+ServiceManager 用 `BreakawayProcessStarter`（`CREATE_BREAKAWAY_FROM_JOB |
+CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`，`BreakawayProcessStarter.cs:117`）启动 unit，
+`UnitSupervisor.StopAsync` 只调用 `CloseMainWindow()`。对没有控制台窗口的进程那是空操作，
+且 `CREATE_NEW_PROCESS_GROUP` 在 Win32 语义下禁用该进程组的 Ctrl+C。因此 **v1 的停机就是等
+`stopTimeoutMs` 超时后强杀**：unit 既收不到 Ctrl+C，也收不到 `ProcessExit`（C 已用
+`CreateProcess` + `CTRL_BREAK` 实测：unit 侧 `Console.CancelKeyPress` / `ProcessExit`
+逻辑本身是好的，退出码 0；但平台路径到不了它们）。
+
+由此对 unit 的硬性要求：**每个 tick 必须独立完成一次完整发布，不得有跨 tick 的半成品
+状态**，因为进程随时可能被强杀。两个 unit 已按此实现（每 tick 重新采集并整包 POST）。
+优雅停机留作后续，见第 9 节第 8 条。
+
 ## 6. 发布契约（router API，只读，不改路由器）
 
 - 快照：`POST {publisherUrl}/api/v1/sources/<source_id>/snapshot`
@@ -269,3 +283,15 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 7. **本机动作不进 tool.json**：采集、打开验证窗口、立即发布、重启 unit、看日志需要本机进程/服务控制，
    Surface 按钮实现（B）；所有进程启动必须 `UseShellExecute=false` + `CreateNoWindow=true`
    或 `-NoNewWindow`（AGENTS.md）。
+
+8. **Codex 配额新鲜度：v1 代理 + v2 后续项（2026-09，C，Lead 批准）**。
+   `MyPowerTools.Platform.Abstractions.CodexQuotaSnapshot` 只暴露 `ResetsAt`，**没有事件时间戳**，
+   因此旧 plugin「事件超过 `ttl_s` 判 stale」那一半无法直接复刻（reset 已过期那一半已复刻）。
+   v1 替代实现：仅当读取走 sessions 回退（`Source == "sessions"`）时，取
+   `%CODEX_HOME%\sessions\**\*.jsonl` 的最大 mtime 作为「最近一次 Codex 活动」的**上界代理**；
+   超过 `ttl_s`(300s) 时仍发布数值但 `status: degraded`、`error: "no recent codex rate-limit event"`、
+   `changed_fields` 只含 `quota.codex.status`；sessions 目录不可用则按 `ok` 发布并在 stdout 心跳行标
+   `freshness=unknown`。app-server 路径不套该代理：RPC 返回的是账户实时状态（旧 plugin 的事件时间戳
+   在那条路径上就是 now，永不 stale），套用只会把真正新鲜的数据误判为 degraded。
+   **v2 后续项**：在该 record 上加 `ObservedAt`（MPT 主仓改动，非本工具写作者范围），
+   即可去掉 mtime 代理。另：v1 的优雅停机（readiness `pipe` 或停机文件）也属 v2，见第 5 节。

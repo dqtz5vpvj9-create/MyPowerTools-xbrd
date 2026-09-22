@@ -13,10 +13,12 @@
       quota.codex source snapshots to the router publisher. Replaces the three overlapping
       producers (logon-trigger pythonw worker, Codex Stop hook, 5-minute trigger task).
     </Description>
-    <MyPowerToolsRepoRoot Condition="'$(MyPowerToolsRepoRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..\..\..\..</MyPowerToolsRepoRoot>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(MyPowerToolsRepoRoot)\src\MyPowerTools.Platform.Abstractions\MyPowerTools.Platform.Abstractions.csproj" />
+    <!-- Consume the SDK package like every other first-party tool project. A
+         ProjectReference through $(MyPowerToolsRepoRoot) escapes the tool directory
+         and trips the A1.7 dependency-boundary gate. -->
+    <PackageReference Include="MyPowerTools.Platform.Abstractions" Version="0.2.0" />
   </ItemGroup>
 </Project>

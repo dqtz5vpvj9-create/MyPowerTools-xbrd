@@ -1,33 +1,85 @@
+using System.Diagnostics;
 using System.Globalization;
-using System.Net.Http.Json;
+using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace Xbrd.Mem.Service;
 
 /// <summary>
-/// xbrd.mem.service 骨架实现（t0）：常驻循环，按 XBRD_MEM_INTERVAL_SECONDS 向路由器发布
-/// quota.mem 快照。契约见仓库根 CONTRACT.md 第 5/6 节。
-/// 与旧计划任务的行为等价（同一 source id、同一 panel key、同一 ttl），但不为每个 tick
-/// 拉起新进程。
+/// xbrd.mem.service - resident publisher of the <c>quota.mem</c> router source.
+///
+/// Behaviour is equivalent to <c>esp32-screen/tools/xbrd_windows_mem_source.ps1</c>:
+/// same source id (<c>quota.mem</c>), same panel key (<c>mem</c>), same panel fields
+/// (label/kind/left/aux/limit/status), same OK/W/L thresholds on the system commit
+/// ratio (85 % / 95 %), same <c>mem-&lt;physical&gt;-&lt;committed&gt;-&lt;limit&gt;-&lt;status&gt;</c>
+/// revision shape and the same <c>ttl_s</c> (300). The difference is that this
+/// process stays resident and publishes every <c>XBRD_MEM_INTERVAL_SECONDS</c>
+/// instead of starting a fresh wscript/powershell process on every tick.
+///
+/// Equivalence of the memory numbers: <see cref="GlobalMemoryStatusEx"/> reports the
+/// system commit limit in <c>ullTotalPageFile</c> and the available commit in
+/// <c>ullAvailPageFile</c>. Measured on this host against
+/// <c>Win32_PerfFormattedData_PerfOS_Memory</c> (the counters the old script used)
+/// the limit matches <c>CommitLimit</c> exactly and the used commit tracks
+/// <c>CommittedBytes</c> within sampling skew (&lt; 0.1 GB), so the commit ratio is
+/// the same quantity the old script published.
+///
+/// Failure never overwrites last-good: when collection or the POST fails nothing is
+/// published, so the router keeps the previous snapshot until its TTL expires. Only
+/// the local heartbeat file records the failure.
+///
+/// Command line (the unit manifest passes no arguments):
+///   --once       publish a single snapshot and exit (0 ok / 1 failed)
+///   --dry-run    print the snapshot JSON on stdout without publishing
 /// </summary>
 internal static class Program
 {
+    private const string UnitId = "xbrd.mem.service";
     private const string SourceId = "quota.mem";
     private const string PanelKey = "mem";
+    private const string DefaultPublisher = "http://ow.lixinrui000.cn:8080";
     private const int DefaultIntervalSeconds = 300;
     private const int TtlSeconds = 300;
+    private const int PublishTimeoutSeconds = 8;
+    private const double WarnCommitRatio = 0.85;
+    private const double LimitCommitRatio = 0.95;
+
+    private static readonly Regex UnsafeRevisionChars = new("[^A-Za-z0-9_.-]+", RegexOptions.Compiled);
 
     private static async Task<int> Main(string[] args)
     {
-        var publisher = (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? "http://ow.lixinrui000.cn:8080").TrimEnd('/');
-        var intervalSeconds = ReadInt("XBRD_MEM_INTERVAL_SECONDS", DefaultIntervalSeconds);
-        var dataRoot = Environment.GetEnvironmentVariable("MPT_TOOL_DATA_ROOT")
-                       ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MyPowerTools", "state", "tools", "xbrd");
+        var dryRun = args.Any(static a => string.Equals(a, "--dry-run", StringComparison.OrdinalIgnoreCase));
+        var once = dryRun || args.Any(static a => string.Equals(a, "--once", StringComparison.OrdinalIgnoreCase));
+
+        var publisher = (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? DefaultPublisher).Trim().TrimEnd('/');
+        var intervalSeconds = Math.Max(5, ReadPositiveInt("XBRD_MEM_INTERVAL_SECONDS", DefaultIntervalSeconds));
+        var dataRoot = ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
-        var heartbeatFile = Path.Combine(dataRoot, "xbrd.mem.service.heartbeat");
+        var heartbeatFile = Path.Combine(dataRoot, UnitId + ".heartbeat");
+
+        if (dryRun)
+        {
+            // Diagnostic path: identical payload shape, no POST, no heartbeat.
+            Console.WriteLine(BuildSnapshot().ToJsonString());
+            return 0;
+        }
+
+        // The enableMemSource setting is not plumbed into the service-unit environment by
+        // v1 of the contract, so absence must keep the unit resident (never exit silently).
+        var enabled = ReadEnabledFlag("XBRD_MEM_ENABLED", "XBRD_ENABLE_MEM_SOURCE");
+        if (enabled is null)
+        {
+            Console.WriteLine(AsciiSafe(
+                $"[{UnitId}] settings flag enableMemSource is absent from the unit environment; defaulting to enabled and staying resident"));
+        }
+        else if (!enabled.Value)
+        {
+            Console.WriteLine(AsciiSafe(
+                $"[{UnitId}] settings flag enableMemSource=false; staying resident without publishing"));
+        }
 
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
@@ -35,47 +87,129 @@ internal static class Program
             e.Cancel = true;
             cts.Cancel();
         };
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => cts.Cancel();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try
+            {
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        };
 
-        Console.WriteLine($"[xbrd.mem] started publisher={publisher} interval={intervalSeconds}s dataRoot={dataRoot}");
+        Console.WriteLine(AsciiSafe(
+            $"[{UnitId}] started pid={Environment.ProcessId} publisher={publisher} interval={intervalSeconds}s dataRoot={dataRoot} ttl={TtlSeconds}s"));
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        var interval = TimeSpan.FromSeconds(Math.Max(5, intervalSeconds));
+        using var http = CreateHttpClient();
+        var interval = TimeSpan.FromSeconds(intervalSeconds);
+        var tick = 0L;
+        var consecutiveFailures = 0;
+        var lastGoodRevision = "";
+        var failedTicks = 0;
 
         while (!cts.IsCancellationRequested)
         {
-            var started = DateTimeOffset.Now;
+            tick++;
+            var observedAt = DateTimeOffset.UtcNow;
+            var stopwatch = Stopwatch.StartNew();
+            string status;
+            string revision = "";
+            string error = "";
+            int? httpStatus = null;
+
+            if (enabled == false)
+            {
+                status = "disabled";
+            }
+            else
+            {
+                try
+                {
+                    var snapshot = BuildSnapshot();
+                    revision = snapshot["revision"]!.GetValue<string>();
+                    using var content = new StringContent(snapshot.ToJsonString(), Encoding.UTF8, "application/json");
+                    using var response = await http
+                        .PostAsync($"{publisher}/api/v1/sources/{SourceId}/snapshot", content, cts.Token)
+                        .ConfigureAwait(false);
+                    httpStatus = (int)response.StatusCode;
+                    var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        throw new InvalidOperationException(
+                            $"publisher returned HTTP {httpStatus}: {Truncate(body, 200)}");
+                    }
+
+                    if (BodyRejectsSnapshot(body))
+                    {
+                        throw new InvalidOperationException(
+                            $"publisher rejected the snapshot: {Truncate(body, 200)}");
+                    }
+
+                    status = "ok";
+                    lastGoodRevision = revision;
+                    consecutiveFailures = 0;
+                }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    // Never publish on failure: the router keeps last-good until TTL expiry.
+                    consecutiveFailures++;
+                    failedTicks++;
+                    status = "error";
+                    error = Truncate(ex.Message, 200);
+                    revision = lastGoodRevision;
+                }
+            }
+
+            stopwatch.Stop();
+            var heartbeat = new JsonObject
+            {
+                ["unit"] = UnitId,
+                ["pid"] = Environment.ProcessId,
+                ["observedAt"] = Iso(observedAt),
+                ["status"] = status,
+                ["httpStatus"] = httpStatus,
+                ["revision"] = revision,
+                ["lastGoodRevision"] = lastGoodRevision,
+                ["consecutiveFailures"] = consecutiveFailures,
+                ["error"] = error,
+                ["publisher"] = publisher,
+                ["intervalSeconds"] = intervalSeconds
+            };
             try
             {
-                var snapshot = BuildSnapshot();
-                var json = snapshot.ToJsonString();
-                using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var response = await http.PostAsync($"{publisher}/api/v1/sources/{SourceId}/snapshot", content, cts.Token);
-                var body = await response.Content.ReadAsStringAsync(cts.Token);
-                Console.WriteLine($"[xbrd.mem] {(int)response.StatusCode} {Truncate(body, 200)}");
+                await File.WriteAllTextAsync(heartbeatFile, heartbeat.ToJsonString(), cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cts.IsCancellationRequested)
             {
+            }
+            catch (Exception ex)
+            {
+                error = Truncate($"heartbeat write failed: {ex.Message}", 200);
+            }
+
+            // Exactly one stdout line per tick. Stdout is forced to ASCII: localized exception
+            // messages (and any non-ASCII data root) would otherwise be written in the process
+            // code page while the ServiceManager decodes the redirected stream with its own
+            // encoding, producing mojibake in the logs viewer. The heartbeat file keeps the
+            // original UTF-8 text.
+            Console.WriteLine(AsciiSafe(
+                $"[{UnitId}] tick={tick} status={status} http={httpStatus?.ToString(CultureInfo.InvariantCulture) ?? "-"} " +
+                $"revision={(revision.Length == 0 ? "-" : revision)} elapsed_ms={stopwatch.ElapsedMilliseconds}" +
+                (error.Length == 0 ? "" : $" error={error}")));
+
+            if (once)
+            {
                 break;
             }
-            catch (Exception ex)
-            {
-                // 采集失败不改变上一次成功快照；路由器按 TTL 判定 stale。
-                Console.Error.WriteLine($"[xbrd.mem] publish failed: {ex.Message}");
-            }
 
             try
             {
-                await File.WriteAllTextAsync(heartbeatFile, started.ToString("O"), cts.Token);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[xbrd.mem] heartbeat write failed: {ex.Message}");
-            }
-
-            try
-            {
-                await Task.Delay(interval, cts.Token);
+                await Task.Delay(interval, cts.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -83,34 +217,37 @@ internal static class Program
             }
         }
 
-        Console.WriteLine("[xbrd.mem] stopped");
-        return 0;
+        Console.WriteLine(AsciiSafe($"[{UnitId}] stopped ticks={tick} failed={failedTicks}"));
+        return once && failedTicks > 0 ? 1 : 0;
     }
 
+    /// <summary>
+    /// Builds the <c>quota.mem</c> snapshot with exactly the field set, ordering,
+    /// thresholds and revision shape of the old PowerShell source script.
+    /// </summary>
     private static JsonObject BuildSnapshot()
     {
         var status = new MEMORYSTATUSEX { dwLength = (uint)Marshal.SizeOf<MEMORYSTATUSEX>() };
         if (!GlobalMemoryStatusEx(ref status))
         {
-            throw new InvalidOperationException("GlobalMemoryStatusEx failed.");
+            throw new InvalidOperationException(
+                $"GlobalMemoryStatusEx failed with Win32 error {Marshal.GetLastWin32Error()}.");
         }
 
         const double gb = 1024d * 1024d * 1024d;
-        var physicalUsedGb = (status.ullTotalPhys - status.ullAvailPhys) / gb;
-        var commitLimitGb = status.ullTotalPageFile / gb;
-        var commitUsedGb = (status.ullTotalPageFile - status.ullAvailPageFile) / gb;
+        // Double arithmetic on purpose: the old script clamps negative/NaN/Inf to 0.0 instead
+        // of wrapping around like unsigned subtraction would.
+        var physicalUsedGb = ClampBytes((double)status.ullTotalPhys - status.ullAvailPhys, gb);
+        var commitUsedGb = ClampBytes((double)status.ullTotalPageFile - status.ullAvailPageFile, gb);
+        var commitLimitGb = ClampBytes(status.ullTotalPageFile, gb);
 
-        var quotaStatus = "OK";
-        if (commitLimitGb > 0)
-        {
-            var ratio = commitUsedGb / commitLimitGb;
-            if (ratio >= 0.95) quotaStatus = "L";
-            else if (ratio >= 0.85) quotaStatus = "W";
-        }
+        var commitRatio = commitLimitGb > 0 ? commitUsedGb / commitLimitGb : 0d;
+        var quotaStatus = commitRatio >= LimitCommitRatio ? "L" : commitRatio >= WarnCommitRatio ? "W" : "OK";
 
-        static string F(double value) => value.ToString("0.0", CultureInfo.InvariantCulture);
-
-        var revision = $"mem-{F(physicalUsedGb)}-{F(commitUsedGb)}-{F(commitLimitGb)}-{quotaStatus}";
+        var physicalText = FormatGb(physicalUsedGb);
+        var committedText = FormatGb(commitUsedGb);
+        var limitText = FormatGb(commitLimitGb);
+        var revision = SanitizeRevision($"mem-{physicalText}-{committedText}-{limitText}-{quotaStatus}");
 
         return new JsonObject
         {
@@ -118,7 +255,7 @@ internal static class Program
             ["schema_version"] = 1,
             ["source_id"] = SourceId,
             ["kind"] = "quota",
-            ["generated_at"] = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
+            ["generated_at"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture),
             ["ttl_s"] = TtlSeconds,
             ["status"] = "ok",
             ["error"] = "",
@@ -136,9 +273,9 @@ internal static class Program
                     {
                         ["label"] = "MEM",
                         ["kind"] = "simple",
-                        ["left"] = F(physicalUsedGb),
-                        ["aux"] = F(commitUsedGb),
-                        ["limit"] = F(commitLimitGb),
+                        ["left"] = physicalText,
+                        ["aux"] = committedText,
+                        ["limit"] = limitText,
                         ["status"] = quotaStatus
                     }
                 }
@@ -146,13 +283,136 @@ internal static class Program
         };
     }
 
-    private static int ReadInt(string name, int fallback)
-        => int.TryParse(Environment.GetEnvironmentVariable(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value > 0
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(PublishTimeoutSeconds) };
+        // CONTRACT.md section 3 reserves `routerToken`; the v1 router publish API is
+        // unauthenticated so this stays inert today. It is never logged.
+        var token = Environment.GetEnvironmentVariable("XBRD_ROUTER_TOKEN");
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token.Trim());
+        }
+
+        return client;
+    }
+
+    private static double ClampBytes(double bytes, double divisor)
+    {
+        if (double.IsNaN(bytes) || double.IsInfinity(bytes) || bytes < 0)
+        {
+            return 0d;
+        }
+
+        return bytes / divisor;
+    }
+
+    private static string FormatGb(double value) => value.ToString("0.0", CultureInfo.InvariantCulture);
+
+    private static string SanitizeRevision(string text)
+    {
+        var safe = UnsafeRevisionChars.Replace(text, "-").Trim('-');
+        return safe.Length == 0 ? $"mem-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}" : safe;
+    }
+
+    private static bool BodyRejectsSnapshot(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return false;
+        }
+
+        try
+        {
+            var parsed = JsonNode.Parse(body);
+            return parsed is JsonObject obj &&
+                   obj.TryGetPropertyValue("accepted", out var accepted) &&
+                   accepted is JsonValue value &&
+                   value.TryGetValue<bool>(out var flag) &&
+                   !flag;
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or FormatException)
+        {
+            return false;
+        }
+    }
+
+    private static string ResolveDataRoot()
+    {
+        var configured = Environment.GetEnvironmentVariable("MPT_TOOL_DATA_ROOT");
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return configured.Trim();
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MyPowerTools",
+            "state",
+            "tools",
+            "xbrd");
+    }
+
+    /// <summary>Returns null when the flag is absent (keep running), otherwise its value.</summary>
+    private static bool? ReadEnabledFlag(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var raw = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            if (bool.TryParse(raw.Trim(), out var parsed))
+            {
+                return parsed;
+            }
+
+            if (raw.Trim() is "1" or "yes" or "on")
+            {
+                return true;
+            }
+
+            if (raw.Trim() is "0" or "no" or "off")
+            {
+                return false;
+            }
+        }
+
+        return null;
+    }
+
+    private static int ReadPositiveInt(string name, int fallback)
+        => int.TryParse(
+                Environment.GetEnvironmentVariable(name),
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out var value) && value > 0
             ? value
             : fallback;
 
+    private static string Iso(DateTimeOffset value) => value.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss'Z'", CultureInfo.InvariantCulture);
+
     private static string Truncate(string text, int max)
         => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
+
+    /// <summary>Keeps stdout ASCII-only so redirected capture never suffers an encoding mismatch.</summary>
+    private static string AsciiSafe(string text)
+    {
+        if (text.All(static ch => ch is >= ' ' and <= '~'))
+        {
+            return text;
+        }
+
+        var builder = new StringBuilder(text.Length);
+        foreach (var ch in text)
+        {
+            builder.Append(ch is >= ' ' and <= '~' ? ch : '?');
+        }
+
+        return builder.ToString();
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORYSTATUSEX
