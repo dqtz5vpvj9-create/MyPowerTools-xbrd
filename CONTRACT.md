@@ -423,3 +423,20 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
     `source = ${settings.publisherUrl}/panel-app/`（title「面板」）；② `commands.index.json` 的
     `xbrd.open.panel` 文案；③ `settings.schema.json` 的 `panelUrl` 描述改为「原始 JSON 入口」。
     D 侧负责导出与 `/panel-app/` 部署；MPT 包、unit、发布清单、计数全部不变。
+
+12. **坑 + 平台级后续项：Shell 持久化 tool 快照会掩盖 route 改动（2026-09-22 实测，A）**。
+    - **现象**：改 `ui/tool.json` 的 route（尤其 `surface.source`）→ dev overlay 跑完 →
+      安装目录 `%LOCALAPPDATA%\Programs\MyPowerTools\modules\xbrd\ui\tool.json` 已是新值 →
+      **Shell 仍用旧 route 打开页面**（本次实测：面板 Tab 仍加载 `.../panel.json`，
+      而 manifest 已指向 `.../panel-app/`）。
+    - **根因**：Shell 把工具描述符持久化在
+      `%LOCALAPPDATA%\MyPowerTools\state\shell-home-tools.v1.pb`
+      （`ShellHomeSnapshotCache`，protobuf `ListToolsResponse`；启动读缓存的逻辑在
+      `MainWindow.Startup.cs:36-57`），**dev overlay 不会失效它**——overlay 只替换安装目录的
+      模块/服务，不动 data root 缓存；`--prewarm` 启动时尤其明显。
+    - **处置**：改 route 后删除该 `.pb`（或让 Shell 刷新工具目录）再重跑 overlay。
+      诊断方式：解析该 protobuf，看 `Route.Source` 是否还是旧值。
+    - **平台级后续项（本轮不改 MPT 脚本）**：`scripts/update-windows-dev.ps1` 在工具包
+      （`modules/<packageId>/**`）发生变化时，应一并失效
+      `<dataRoot>\state\shell-home-tools.v1.pb`（或让 Shell 在 reconcile 后以 live tools 覆盖），
+      否则任何工具改 route 的人都会看到「新 Shell + 旧 route」。

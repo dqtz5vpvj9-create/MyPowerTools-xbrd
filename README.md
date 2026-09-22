@@ -63,6 +63,35 @@ pwsh.exe -NoLogo -NoProfile -NonInteractive -File scripts/Start-MyPowerTools-Dev
   -Scope Tools -ToolId xbrd
 ```
 
+### 改了 route/source 却看不到变化？先删 Shell 的 tool 快照（2026-09-22 实测）
+
+**现象**：改了 `ui/tool.json` 的 route（尤其 `surface.source`），dev overlay 也跑完了，
+安装目录 `%LOCALAPPDATA%\Programs\MyPowerTools\modules\xbrd\ui\tool.json` 已是新值，
+但 Shell 打开页面时**仍用旧 route**（例：面板 Tab 仍加载 `.../panel.json` 而不是 `.../panel-app/`）。
+
+**根因**：Shell 把工具描述符**持久化**在
+
+```text
+%LOCALAPPDATA%\MyPowerTools\state\shell-home-tools.v1.pb     # ShellHomeSnapshotCache，protobuf ListToolsResponse
+```
+
+Shell 启动时优先读它（`MainWindow.Startup.cs:36-57`；`--prewarm` 启动尤其明显），
+而 **dev overlay 不会失效这个快照**——它只替换安装目录里的模块/服务，不动 data root 的缓存。
+诊断：该文件里的描述符仍是旧 route（可用 protobuf 解析确认 `route.Source`）。
+
+**处置**（二选一）：
+
+```powershell
+# A) 直接失效缓存后重跑 overlay（本次采用，立即生效）
+Remove-Item "$env:LOCALAPPDATA\MyPowerTools\state\shell-home-tools.v1.pb" -Force
+pwsh.exe -NoLogo -NoProfile -NonInteractive -File scripts\Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd
+# B) 让 Shell 自己去刷新工具目录（打开 All tools / 触发 RUNNER 工具目录刷新），再重新打开目标 Tab
+```
+
+注意：overlay 重启 Shell 时若缓存仍在，Shell 会先用**旧**描述符渲染并后台 reconcile；
+即使 Shell 是新进程，也可能出现「新 Shell + 旧 route」。平台级建议见 CONTRACT 第 9 节第 12 条
+（dev overlay 在工具包变化时主动失效该快照，本轮不改 MPT 脚本）。
+
 ### 首次引入新 Service Unit 的坑（必须知道）
 
 `scripts/update-windows-dev.ps1` 只在**安装目录已经存在**该 unit 时才允许 overlay：
