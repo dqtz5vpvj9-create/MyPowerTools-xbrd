@@ -147,8 +147,8 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
     // ---------------------------------------------------------------- panel preview
 
     /// <summary>
-    /// The router serves JSON (there is no HTML admin page), so the panel's real content is
-    /// previewed here from <c>GET {publisherUrl}/panel.json</c>. Read-only.
+    /// Raw panel JSON previewed from <c>GET {publisherUrl}/panel.json</c> — 原始 panel JSON
+    /// （设备与发布器的原始数据入口）；可读 UI 见 <c>/panel-app/</c>（复用手机端配额 UI）。Read-only.
     /// </summary>
     public ObservableCollection<XbrdPanelField> PanelStatusFields { get; } = [];
 

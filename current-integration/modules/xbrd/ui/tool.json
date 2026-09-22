@@ -14,11 +14,11 @@
     {
       "routeId": "panel",
       "surfaceId": "xbrd.panel",
-      "title": "面板数据",
+      "title": "面板",
       "icon": "route.overview",
       "surface": {
         "kind": "web",
-        "source": "${settings.panelUrl}",
+        "source": "${settings.publisherUrl}/panel-app/",
         "openExternal": true,
         "allowedOrigins": [
           "${settings.publisherUrl}"

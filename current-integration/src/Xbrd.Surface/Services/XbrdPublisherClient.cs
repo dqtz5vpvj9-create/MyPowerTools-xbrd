@@ -48,8 +48,8 @@ public sealed class XbrdPublisherClient : IDisposable
     }
 
     /// <summary>
-    /// Reads the panel document. The router has no HTML page (<c>/panel</c> serves the same JSON),
-    /// so this is the tool's only view of the panel's real content.
+    /// Reads the raw panel document: 原始 panel JSON（设备与发布器的原始数据入口）；可读 UI 见
+    /// <c>/panel-app/</c>（复用手机端配额 UI）。
     /// </summary>
     public async Task<XbrdPanelSnapshot> GetPanelAsync(string publisherUrl, CancellationToken cancellationToken)
     {

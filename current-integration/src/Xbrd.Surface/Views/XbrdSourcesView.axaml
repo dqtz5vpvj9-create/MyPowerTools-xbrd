@@ -89,7 +89,7 @@
         </Border>
       </Grid>
 
-      <!-- ── 面板数据预览（路由器没有 HTML 管理页：/panel 与 /panel.json 是同一份 JSON） ── -->
+      <!-- ── 面板数据预览（原始 panel JSON；可读 UI 见 /panel-app/） ── -->
       <Border Classes="MptCard">
         <StackPanel Spacing="{DynamicResource MptSpacingM}">
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
@@ -97,7 +97,7 @@
               <TextBlock Classes="MptSectionTitle" Text="面板数据预览" Margin="{DynamicResource MptNoThickness}" />
               <TextBlock Classes="MptMeta"
                          TextWrapping="Wrap"
-                         Text="路由器没有 HTML 管理页：/panel 与 /panel.json 返回同一份 JSON。本卡片直接渲染 panel.json，只读，字段按实际结构动态遍历。" />
+                         Text="原始 panel JSON（设备与发布器的原始数据入口）；可读 UI 见 /panel-app/（复用手机端配额 UI）。本卡片只读，字段按实际结构动态遍历。" />
               <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding PanelPreviewMetaText}" />
             </StackPanel>
             <StackPanel Grid.Column="1"

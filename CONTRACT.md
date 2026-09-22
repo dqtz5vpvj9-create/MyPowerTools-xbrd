@@ -22,19 +22,24 @@
 
 | routeId | title | surface.kind | 目标 |
 |---|---|---|---|
-| `panel` | 面板数据 | `web` | `${settings.panelUrl}`（默认 `http://ow.lixinrui000.cn:8080/panel.json`；`openExternal: true`，`allowedOrigins: ["${settings.publisherUrl}"]`） |
+| `panel` | 面板 | `web` | `${settings.publisherUrl}/panel-app/`（`openExternal: true`，`allowedOrigins: ["${settings.publisherUrl}"]`） |
 | `sources` | 来源与配额 | `dotnet` | `surface/Xbrd.Surface.dll`，类型 `Xbrd.Surface.XbrdSurfaceFactory` |
 
-**面板 Tab 是设备原始 panel JSON 的只读视图（2026-09，Lead 核实 + A 复验）。** 路由器**没有** HTML
-管理页：`GET /` 是 `text/html` 的 499 字节 stub（标题 + Health/Info/panel.json 链接，body 里自己写着
-“Use `/panel.json` as the ESP32 panel URL”），`GET /panel` 与 `GET /panel.json` 返回同一 handler
-（`application/json`，1451 字节，esp32-screen `app.py:1410-1412`）。因此 route `panel` 里 WebView 显示的
-就是这段原始 JSON 文本，属于**排障用的只读视图**；给人看的「面板数据预览」卡片由 `sources` Tab
-（B 的原生 Surface）提供。别再把它当成路由器管理页，也不要为此给路由器加 HTML 页。
+**面板 Tab 复用手机端配额 UI（2026-09-22 用户裁定；托管形态 (i) 路由器静态托管）。** 手机端
+`apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，本质相同就该复用；
+D 把它的 web 导出部署到路由器 `/panel-app/`（`GET http://ow.lixinrui000.cn:8080/panel-app/` → 200
+`text/html`，与 `/panel.json` 同源），MPT 侧**零新增服务**。此前结论「路由器没有 HTML 管理页、
+面板 Tab 只能看原始 JSON」**已作废**（`GET /` 的 499 字节 stub 只是默认页）。
+备选形态 (ii)「MPT 本地 `http://127.0.0.1:19224/` + `xbrd.panel.service`」的参数与完整改动清单保留在
+第 9 节第 11 条，**本次未采用**。
 
-**2026-09 修正（A 包与集成）**：route 的 `source` 与 `allowedOrigins` 由字面量改成 `${settings.*}`
-token，默认值与原来完全一致。原因：`settings.panelUrl` / `settings.publisherUrl` 已冻结为设置 key，
-若 route 写死字面量，用户在设置里改地址对面板 Tab 无效（设置项变成死配置）。
+`settings.panelUrl`（默认 `.../panel.json`）语义相应变为**原始数据入口**：用于「Open externally /
+原始数据」与 sources Tab 的「面板数据预览」诊断，**不再是面板 Tab 的 source**。
+
+**2026-09 修正（A 包与集成）**：route 的 `source` 与 `allowedOrigins` 用 `${settings.*}` token。
+原因：这些 key 是冻结的设置 key，写死字面量时用户在设置里改地址对面板 Tab 无效（设置项变成死配置）。
+`ToolRegistry` 在注册期展开 route 的 `surface.source`，Shell 在创建 web surface 时再展开
+`allowedOrigins`（`ExternalTools.cs:289-306`）；两处共用同一个 settings 值文件。
 
 代码依据：
 - `src/MyPowerTools.Runtime/ToolRegistry.cs:217` 在**注册期**就用模块根的 `settings.json` 展开
@@ -60,7 +65,7 @@ token，默认值与原来完全一致。原因：`settings.panelUrl` / `setting
 | key | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `publisherUrl` | string | `http://ow.lixinrui000.cn:8080` | 路由器发布器 |
-| `panelUrl` | string | `http://ow.lixinrui000.cn:8080/panel.json` | 设备原始 panel JSON（面板 Tab 只读视图） |
+| `panelUrl` | string | `http://ow.lixinrui000.cn:8080/panel.json` | 设备**原始** panel JSON 入口（Open externally / 原始数据 / Surface 诊断）；**不再是面板 Tab 的 source**（§9.11） |
 | `xbrdRepoRoot` | string | `C:\Users\lixinrui\repo\esp32-screen` | 采集脚本所在 checkout |
 | `connectionTimeoutMs` | integer | `5000` | 探测超时 |
 | `autoRefresh` | boolean | `true` | surface 自动刷新 |
@@ -262,8 +267,10 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`，`BreakawayProcessStarter.cs:117`�
 
 1. `pwsh -File build.ps1 -MyPowerToolsRepoRoot F:\repo\MyPowerTools` 退出码 0，`artifacts/package` 就位。
 2. `Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd` 成功，开发版 Shell 启动。
-3. 工具卡片出现；`panel`（面板数据）Tab 内嵌设备原始 panel JSON（只读，见第 2 节）；`sources` Tab
-   渲染来源清单 + 「面板数据预览」卡。
+3. 工具卡片出现；`panel` Tab 内嵌路由器 `/panel-app/`，渲染的是**复用手机端 `quota-universal` 的配额
+   UI**——验收看 hero(codex) + tiles(DS/LAB/TAG/MES) + strip(MEM)，**不是** `{"schema":"xbrd.panel.v1"...}`
+   原始 JSON、不是空白、不是恢复页；路由器/页面不可达时显示 MPT 恢复页（Try again / Open externally）
+   且 Shell 不崩；`sources` Tab 与「面板数据预览」卡不受影响（原始 JSON 入口见第 3 节 `panelUrl`）。
 4. 系统 › 服务 页出现 `xbrd.mem.service` 与 `xbrd.codex-quota.service`（active）；
    `%LOCALAPPDATA%\MyPowerTools\state\<unitId>.heartbeat` 两份单行小文件存在并随 tick 前进。
 5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 的 `age_s` 由两个 unit 的 tick 驱动
@@ -366,3 +373,53 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
       UNCERTAIN 换个位置。
     现阶段两条都不是必需项：第 4 节表里 `execution.type = "http.request"` 的静态索引路径在 `mpt run`
     下已验证可用。
+
+11. **面板 Tab（复用手机端 quota-universal UI）的托管形态：(i) 路由器静态托管——已采用（2026-09-22）**。
+    背景：手机端 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，
+    用户裁定复用；D 完成 web 导出并部署到路由器 `/panel-app/`（A 实测
+    `GET http://ow.lixinrui000.cn:8080/panel-app/` 与 `http://10.33.0.1:8080/panel-app/` 均 200
+    `text/html`），因此采用 (i)，MPT 侧零新增服务。下表保留两种形态的参数，**(ii) 未采用**，
+    仅作为「路由器不可用/需要离线页面」时的备选（其完整改动清单见下）。
+
+    | | (i) 路由器托管 | (ii) MPT 本地托管 |
+    |---|---|---|
+    | `panel` route `surface.source` | `${settings.publisherUrl}/panel-app/` | `http://127.0.0.1:19224/` |
+    | `allowedOrigins` | `["${settings.publisherUrl}"]` | `["http://127.0.0.1:19224"]` |
+    | `openExternal` | `true` | `true`（打开同一个本地页；原始数据仍走 `settings.panelUrl`） |
+    | MPT 侧新增服务 | **无** | 新增 Service Unit `xbrd.panel.service`（HttpListener：静态页 + `/panel.json` 代理到 `{publisherUrl}`，`readiness: none`、`autostart: true`） |
+    | 页面取数方式 | 同源相对 `panel.json`（`/panel-app/` 与 `/panel.json` 同源） | 同源相对 `panel.json`（由本地 unit 代理，避免跨域/路由器无 CORS） |
+    | 前置条件 | 路由器可静态托管且 `/panel-app/` 可达；D 的部署脚本要能连上路由器（**当前 ~/ssh 22 不可达、`plink` 默认 22 无端口参数，D 报告阻塞**） | 端口 19224 空闲（**A 实测：当前无监听、连接被拒=可用**）；unit 首次引入需先预置安装目录（见第 9.5 条） |
+    | 风险 | 部署依赖 SSH；路由器存储/权限未知 | 多一个常驻进程与端口；页面资源随包发布，版本与路由器数据解耦 |
+
+    `settings.panelUrl` 在两种形态下都只保留「原始 JSON 入口」语义（见第 3 节）。
+
+    **(ii) 本地托管的完整改动清单**（**本次未采用**，保留备查；由 Lead 按需派发）：
+    1. 新增 `current-integration/src/Xbrd.Panel.Service/{Xbrd.Panel.Service.csproj, Program.cs, unit-manifest.json}`，
+       unit id `xbrd.panel.service`，`exec: bin/Xbrd.Panel.Service.exe`，`autostart: true`，
+       `readiness: { "kind": "none" }`，`stopTimeoutMs`、`dataRoots`、`instanceToken: xbrd-panel-service-v1`，
+       env `XBRD_PUBLISHER`（+ 可选 `XBRD_PANEL_PORT=19224`）；控制台必须 `CreateNoWindow`（AGENTS.md）。
+    2. 手机端 web 导出产物随 unit 发布（`web/` 目录），页面用**同源相对** `panel.json` 取数。
+    3. `tool-release.json` 的 `serviceUnits` 追加第三个 unit。
+    4. `scripts/build-all-tools.ps1` 的 xbrd `ServiceUnits` 追加该 unit（publish-windows 按
+       `source-manifest.json` 动态拷贝 unit，`$packageByTool` 不用改）。
+    5. `scripts/verify-release-candidate.ps1`：`$expectedServiceUnits` 追加 `xbrd.panel.service`
+       （A5.1b 清单 + A5.2 关键载荷随之校验该 unit 的 manifest/exe）。
+       **A5.3 / A5.7 不需要 +1**：A5.3 数的是 `payload\modules` 下的 `*.Surface.dll`，A5.7 匹配 Runner
+       `--once` 输出的模块 id——新增的是 Service Unit（不是模块），两者都不受影响。
+    6. `scripts/verify-release-candidate.remote.ps1`：A5.R2/A5.R3 从 `$installResult.units` 动态枚举，
+       无硬编码清单；但要确认安装器把第三个 unit 一并装进隔离 data root。
+    7. `ui/tool.json`：`panel` route 换成 (ii) 的两个参数（这也是第 2 节里唯一被冻结的形态差异）。
+    8. `ui/settings.schema.json`：`panelUrl` 描述改为「原始 JSON 入口」；若要允许改端口，
+       需新增设置 key（如 `panelLocalUrl`）并把 route source 换成 `${settings.panelLocalUrl}`，
+       否则端口写死在 unit manifest 的 env 里。
+    9. `commands.index.json` 的 `xbrd.open.panel` 文案（复用手机端 UI）。
+    10. 首次 dev overlay 前，把 `xbrd.panel.service` 预置到
+        `%LOCALAPPDATA%\Programs\MyPowerTools\service-units\xbrd.panel.service`（第 9.5 条的坑）。
+    11. 文档：README「首次引入新 Service Unit 的坑」补该 unit；CONTRACT 第 5 节补它的 manifest 契约。
+    12. 验证：`Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd` → 系统›服务 出现第三个 unit
+        （active）+ 面板 Tab 渲染手机端配额 UI；unit 未起时显示 MPT 恢复页；`shell-faults.log` 无新增。
+        `scripts/artifacts-policy.json` 无需新增条目（产物仍在 `artifacts/tools/xbrd/<v>/`）。
+    **(i) 路由器托管（已采用）的实际改动清单**：① `ui/tool.json` 的 panel route 换成
+    `source = ${settings.publisherUrl}/panel-app/`（title「面板」）；② `commands.index.json` 的
+    `xbrd.open.panel` 文案；③ `settings.schema.json` 的 `panelUrl` 描述改为「原始 JSON 入口」。
+    D 侧负责导出与 `/panel-app/` 部署；MPT 包、unit、发布清单、计数全部不变。

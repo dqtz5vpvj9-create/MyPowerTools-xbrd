@@ -2,7 +2,7 @@
 
 XBRD 圆屏的 MyPowerTools 集成：一个工具、两个 Tab。
 
-- **面板数据**：设备**原始 panel JSON** 的只读视图（`settings.panelUrl`，默认 `http://ow.lixinrui000.cn:8080/panel.json`，Web Surface）。路由器**没有** HTML 管理页：`GET /` 只是 499 字节的标题+链接 stub，body 里自己写着 “Use `/panel.json` as the ESP32 panel URL”，而 `/panel` 与 `/panel.json` 是同一个 handler（`application/json`，esp32-screen `app.py:1410-1412`）。WebView 里显示的就是这段 JSON 文本，属排障视图；给人看的「面板数据预览」卡片在 `sources` Tab。
+- **面板**：内嵌路由器 **`/panel-app/`**（`source = ${settings.publisherUrl}/panel-app/`，Web Surface）——**复用手机端配额 UI**：手机端 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，D 已把它的 web 导出部署到路由器 `/panel-app/`，MPT 侧零新增服务。验收看 hero=codex、tiles=DS/LAB/TAG/MES、strip=MEM，**不是** `{"schema":"xbrd.panel.v1"...}` 原始 JSON。`settings.panelUrl`（默认 `http://ow.lixinrui000.cn:8080/panel.json`）是**原始数据入口**（Open externally / 原始数据 / sources Tab 的「面板数据预览」诊断），**不再是面板 Tab 的 source**。路由器不可达时由 MPT 显示恢复页（Try again / Open externally）。备选方案 (ii)「本地 `http://127.0.0.1:19224/` + `xbrd.panel.service`」未采用，参数与清单保留在 [CONTRACT.md](CONTRACT.md) 第 9 节第 11 条。
 - **来源与配额**：9 个信息来源的状态/TTL 健康、采集器状态、两个常驻服务（原生 dotnet Surface）。
 
 接口冻结见 [CONTRACT.md](CONTRACT.md)。字段名/契约改动必须先改 CONTRACT.md。
@@ -137,8 +137,9 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
 - **web route 的 WebBridge**：宿主支持 `command.invoke` / `settings.get` / `secrets.get` /
   `navigation.openExternal`（实现见 `ShellWorkspaceController.ExternalWebBridge.cs`），页面 origin 必须在
-  `ui/tool.json` 的 `allowedOrigins` 里。但**本工具的面板 Tab 加载的是路由器返回的原始 JSON，页面里没有
-  任何脚本**，所以实际不会调用 WebBridge。
+  `ui/tool.json` 的 `allowedOrigins` 里。但**面板 Tab 的目标页是手机端 RN-web 的静态导出（无论托管在
+  路由器还是本地 unit），不认识 MPT WebBridge 协议**，所以实际不会调用 WebBridge；两条命令的入口是
+  工具页/命令面板（见下条可达性）。
 - **可达性（2026-09-22 复核，详见 CONTRACT 第 4 节表）**：
   - 工具页 / WebBridge / `ui/tool.json` commands：**可用**；
   - `commands.index.json` 静态索引 + 包级 `validate contracts`：**可用**（`commands=7`）；

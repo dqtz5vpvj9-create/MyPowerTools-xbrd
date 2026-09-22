@@ -39,9 +39,8 @@ public sealed record XbrdPanelQuotaRow(
 }
 
 /// <summary>
-/// Read-only projection of <c>GET {publisherUrl}/panel.json</c> (schema <c>xbrd.panel.v1</c>).
-/// The router has no HTML page — <c>/panel</c> serves this same JSON — so this card is the only
-/// place the panel's real content is visible inside the tool.
+/// Read-only projection of <c>GET {publisherUrl}/panel.json</c> (schema <c>xbrd.panel.v1</c>) —
+/// 原始 panel JSON（设备与发布器的原始数据入口）；可读 UI 见 <c>/panel-app/</c>（复用手机端配额 UI）。
 /// </summary>
 public sealed record XbrdPanelSnapshot(
     bool Ok,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "XBRD 屏幕设置",
-  "description": "key 冻结见 CONTRACT.md 第 3 节。panelUrl / publisherUrl 被 ui/tool.json 的 route.surface.source、allowedOrigins 与 runtime.endpoint 以 ${settings.*} 直接引用，改这里即改面板目标。注意 module.json 的 http entrypoint baseUrl 是静态的，换发布器地址时要一起改。",
+  "description": "key 冻结见 CONTRACT.md 第 3 节。publisherUrl 被 ui/tool.json 的 route.surface.source（panel Tab 的 /panel-app/ 与 allowedOrigins）与 runtime.endpoint 以 ${settings.*} 直接引用；panelUrl 是原始 JSON 入口（Open externally / 原始数据 / Surface 诊断），不再是面板 Tab 的 source。注意 module.json 的 http entrypoint baseUrl 是静态的，换发布器地址时要一起改。",
   "type": "object",
   "properties": {
     "publisherUrl": {
@@ -12,8 +12,8 @@
     },
     "panelUrl": {
       "type": "string",
-      "title": "设备 panel JSON 地址",
-      "description": "面板 Tab 内嵌的设备原始 panel JSON（application/json）。路由器没有 HTML 管理页：GET / 只有 499 字节的标题+链接 stub，且它自己写着 Use /panel.json as the ESP32 panel URL；/panel 与 /panel.json 是同一 handler（esp32-screen app.py:1410-1412）。该 URL 的 origin 必须同时出现在 ui/tool.json 的 allowedOrigins 中。",
+      "title": "设备原始 panel JSON 入口",
+      "description": "原始数据入口（application/json，schema xbrd.panel.v1），用于「Open externally / 原始数据」与 sources Tab 的「面板数据预览」诊断。**不再是面板 Tab 的 source**：面板 Tab 内嵌 ${settings.publisherUrl}/panel-app/（复用手机端 quota-universal 配额 UI，由 D 部署到路由器）。该 URL 的 origin 必须同时出现在 ui/tool.json 的 allowedOrigins 中。",
       "default": "http://ow.lixinrui000.cn:8080/panel.json"
     },
     "xbrdRepoRoot": {

@@ -3,8 +3,8 @@
   "commands": [
     {
       "id": "xbrd.open.panel",
-      "title": "打开 XBRD 面板数据",
-      "subtitle": "设备原始 panel JSON 的只读视图",
+      "title": "打开 XBRD 面板",
+      "subtitle": "设备配额面板 UI（复用手机端 quota-universal）",
       "kind": "open",
       "category": "XBRD",
       "execution": {
