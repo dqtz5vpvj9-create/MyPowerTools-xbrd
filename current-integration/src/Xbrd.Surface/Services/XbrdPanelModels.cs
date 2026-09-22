@@ -17,30 +17,10 @@ public sealed record XbrdPanelField(string Label, string Value, string SeverityT
 }
 
 /// <summary>
-/// One <c>quota</c> entry of the panel document. The property set is discovered from the payload
-/// (proxy/mes/mem/codex/glm/deepseek/lab today, anything else tomorrow) — no key list is hardcoded.
-/// </summary>
-public sealed record XbrdPanelQuotaRow(
-    string Key,
-    string Label,
-    string Left,
-    string Aux,
-    string Status,
-    string Detail,
-    XbrdSeverity Severity)
-{
-    public bool IsReady => Severity == XbrdSeverity.Ready;
-
-    public bool IsDegraded => Severity == XbrdSeverity.Degraded;
-
-    public bool IsError => Severity == XbrdSeverity.Error;
-
-    public string KeyText => string.Equals(Key, Label, StringComparison.OrdinalIgnoreCase) ? "" : Key;
-}
-
-/// <summary>
 /// Read-only projection of <c>GET {publisherUrl}/panel.json</c> (schema <c>xbrd.panel.v1</c>) —
 /// 原始 panel JSON（设备与发布器的原始数据入口）；可读 UI 见 <c>/panel-app/</c>（复用手机端配额 UI）。
+/// Only the sections the readable UI does not show are previewed here (status / weather / plan):
+/// <c>quota</c> belongs to the panel Tab, so it is intentionally not repeated on this page.
 /// </summary>
 public sealed record XbrdPanelSnapshot(
     bool Ok,
@@ -50,7 +30,6 @@ public sealed record XbrdPanelSnapshot(
     IReadOnlyList<XbrdPanelField> StatusFields,
     IReadOnlyList<XbrdPanelField> WeatherFields,
     IReadOnlyList<XbrdPanelField> PlanFields,
-    IReadOnlyList<XbrdPanelQuotaRow> QuotaRows,
     string TodosText,
     int OtherFieldCount,
     string Error,
@@ -60,7 +39,7 @@ public sealed record XbrdPanelSnapshot(
     public static XbrdPanelSnapshot Empty { get; } = Failed("", "尚未读取。");
 
     public static XbrdPanelSnapshot Failed(string endpoint, string error) =>
-        new(false, "", 0, "", [], [], [], [], "", 0, error, endpoint, DateTimeOffset.Now);
+        new(false, "", 0, "", [], [], [], "", 0, error, endpoint, DateTimeOffset.Now);
 
     /// <summary>Aggregate pill of the card: worst of <c>status.network/wifi/bluetooth/battery</c>.</summary>
     public XbrdSeverity StatusSeverity
@@ -91,8 +70,6 @@ public sealed record XbrdPanelSnapshot(
 
     public bool HasPlan => PlanFields.Count > 0;
 
-    public bool HasQuota => QuotaRows.Count > 0;
-
     public bool HasError => !Ok && Error.Length > 0;
 
     public string UpdatedText => Updated.Length == 0 ? "—" : Updated;
@@ -100,7 +77,7 @@ public sealed record XbrdPanelSnapshot(
     public string SchemaText => Schema.Length == 0 ? "—" : $"{Schema} v{SchemaVersion}";
 
     public string CountsText =>
-        $"status {StatusFields.Count} · weather {WeatherFields.Count} · plan {PlanFields.Count} · quota {QuotaRows.Count}" +
+        $"status {StatusFields.Count} · weather {WeatherFields.Count} · plan {PlanFields.Count}" +
         (OtherFieldCount > 0 ? $" · 其它字段 {OtherFieldCount}" : "");
 
     public string ErrorText => Ok
@@ -141,7 +118,6 @@ public static class XbrdPanelParser
         var plan = root["plan"] as JsonObject;
         var planFields = Flatten(plan, "plan", classify: false);
         var todosText = DescribeTodos(plan?["todos"] as JsonArray);
-        var quotaRows = ParseQuota(root["quota"] as JsonObject);
 
         var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -157,7 +133,6 @@ public static class XbrdPanelParser
             statusFields,
             weatherFields,
             planFields,
-            quotaRows,
             todosText,
             otherFieldCount,
             "",
@@ -227,91 +202,6 @@ public static class XbrdPanelParser
                 }
             }
         }
-    }
-
-    private static IReadOnlyList<XbrdPanelQuotaRow> ParseQuota(JsonObject? quota)
-    {
-        var rows = new List<XbrdPanelQuotaRow>();
-        if (quota is null)
-        {
-            return rows;
-        }
-
-        foreach (var pair in quota)
-        {
-            if (pair.Value is JsonObject entry)
-            {
-                rows.Add(BuildQuotaRow(pair.Key, entry));
-                continue;
-            }
-
-            var scalar = ReadScalar(pair.Value);
-            if (scalar.Length > 0)
-            {
-                rows.Add(new XbrdPanelQuotaRow(pair.Key, pair.Key, scalar, "", "", "", ClassifyStatus(scalar)));
-            }
-        }
-
-        rows.Sort(static (left, right) => string.CompareOrdinal(left.Key, right.Key));
-        return rows;
-    }
-
-    private static XbrdPanelQuotaRow BuildQuotaRow(string key, JsonObject entry)
-    {
-        var label = ReadScalar(entry["label"]);
-        if (label.Length == 0)
-        {
-            label = key;
-        }
-
-        var status = ReadScalar(entry["status"]);
-        var left = ReadScalar(entry["left"]);
-        if (left.Length == 0)
-        {
-            // "double" quota entries carry d7_left/h5_left instead of left.
-            left = ReadScalar(entry["h5_left"]);
-            if (left.Length == 0)
-            {
-                left = ReadScalar(entry["d7_left"]);
-            }
-        }
-
-        var aux = ReadScalar(entry["aux"]);
-
-        // Everything else the entry carries, in payload order, minus the columns already shown.
-        var consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "label", "status", "left", "aux", "kind", "h5_left", "d7_left"
-        };
-        var detail = new List<string>();
-        foreach (var pair in entry)
-        {
-            if (consumed.Contains(pair.Key))
-            {
-                continue;
-            }
-
-            var text = ReadScalar(pair.Value);
-            if (text.Length > 0)
-            {
-                detail.Add($"{pair.Key}={text}");
-            }
-        }
-
-        var kind = ReadScalar(entry["kind"]);
-        if (kind.Length > 0)
-        {
-            detail.Insert(0, $"kind={kind}");
-        }
-
-        return new XbrdPanelQuotaRow(
-            key,
-            label,
-            left.Length == 0 ? "—" : left,
-            aux,
-            status.Length == 0 ? "—" : status,
-            string.Join(" · ", detail),
-            status.Length == 0 ? XbrdSeverity.Degraded : ClassifyStatus(status));
     }
 
     private static string DescribeTodos(JsonArray? todos)

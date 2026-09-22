@@ -243,14 +243,117 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`，`BreakawayProcessStarter.cs:117`�
 不影响发布主流程。**必须跟随 `MPT_DATA_ROOT`**：远程门禁把 unit 装进隔离的临时 data root
 （`verify-release-candidate.remote.ps1:204-207`），写死 `%LOCALAPPDATA%` 会导致 `A5.R3` FAIL。
 
-## 6. 发布契约（router API，只读，不改路由器）
+#### 立即发布控制端点（C2，冻结接口）
+
+Surface 的「立即发布」必须是**真触发一次采集并发布**，且**不重启 unit**（PID 不变）。
+
+| unit | 控制端口（仅回环、仅当前用户） |
+|---|---|
+| `xbrd.mem.service` | `127.0.0.1:19225` |
+| `xbrd.codex-quota.service` | `127.0.0.1:19226` |
+
+| 端点 | 语义 |
+|---|---|
+| `POST /publish-now` | 立即执行一次该 unit 的采集+发布，返回 `{ ok, source_id, revision, duration_ms, status }`。**必须与周期 tick 互斥**：同一 unit 同时只允许一次发布，重复调用可返回 `skipped:true`。进程不重启。 |
+| `GET /state` | 返回该 unit 的心跳/上次结果（与工具根 JSON 心跳同源，供 Surface 诊断） |
+
+**降级规则（必须实现，不得崩溃）**：端口被占用或监听失败时，降级为**触发文件**
+`%MPT_TOOL_DATA_ROOT%\xbrd.<unit>.trigger`（Surface 触碰 mtime 即触发一次），结果仍通过工具根
+JSON 心跳回报；降级原因写日志。冻结的确切文件名（C 实现，B 只能按这两个写）：
+
+| unit | 规范触发文件（新文件创建或 mtime 前进即触发） | 兼容别名 |
+|---|---|---|
+| `xbrd.mem.service` | `%MPT_TOOL_DATA_ROOT%\xbrd.mem.trigger` | `xbrd.mem.service.trigger` |
+| `xbrd.codex-quota.service` | `%MPT_TOOL_DATA_ROOT%\xbrd.codex-quota.trigger` | `xbrd.codex-quota.service.trigger` |
+
+**env**：端口用 `XBRD_CONTROL_PORT` 表达（unit manifest 的 `environment` 允许新增该键；
+冻结字段 `id`/`exec`/`readiness`/`instanceToken`/`dataRoots` 不变）。**不新增 tool 设置项**：
+端口是冻结常量，Surface 直接用上表地址；`ui/settings.schema.json` 本轮因此不需要新 key。
+调用方可选设 `XBRD_CONTROL_PORT` 覆盖默认端口；非法值只记 stderr 并回落默认端口。
+
+**`disabled` 语义**：`enableMemSource` / `enableCodexSource` 显式 `false` 时，unit 常驻但
+`status=disabled`，**不发任何 HTTP**（不采集、不发布），`/state` 如实回报；恢复 `true` 后下一个
+tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:true, status:"disabled"}`
+且**不改动路由器上的快照**。
+
+**实现细节与边界（C2，C 实现并实测）**
+
+- 发布者唯一：周期 tick 与 `publish-now` 走**同一个循环**，控制端点只“请求再跑一轮”，因此二者
+  天然不会并发重复发布。请求落在发布进行中 → `{ok:true, skipped:true, status:"in-progress"}`；
+  已有排队请求 → `status:"queued"`；等待超过 30 s → `{ok:false, skipped:true, status:"timeout"}`。
+- `POST /publish-now` 响应 = 冻结的 `{ok, source_id, revision, duration_ms, status}` 外加
+  `skipped` / `error` / `http_status` / `pid`。`ok=true` 表示“已按请求处理”（成功发布，或按
+  `disabled`/并发语义合法跳过）；发布失败或超时为 `ok=false`，细节看 `status`。
+- `GET /state` 额外给出 `control`（`http`|`trigger-file`）、`port`、`trigger_file`、
+  `trigger_files_watched`、`publishing`、`publish_requests`、`uptime_s`、`last`。
+- 工具根 JSON 心跳新增 `control` 字段：降级时 `/state` 按定义不可达，Surface 只能靠心跳发现
+  `control:"trigger-file"` 并改写触发文件。
+- 监听地址固定 `IPAddress.Loopback`（绝不通配 0.0.0.0）。**诚实边界**：回环端口只保证“不跨机器”，
+  同一台机器的其他本地用户仍可调用——v1 接受这一风险（端点只能触发一次公开配额数据发布，无鉴权、
+  无提权面）；要严格“仅当前用户”需命名管道 + DACL 或共享 token，列为 v2。
+- `--once` / `--dry-run` **不启动**控制端点（它们本来就只发布一次就退出）。
+
+**落地状态（2026-09-22 第二段，C 更新）**：C2 已在仓库 publish 产物中实现并逐项实测通过——
+回环端点（`POST /publish-now` 使 `age_s` 归零、`revision` 变化、**PID 不变**）、连续两次立即发布、
+并发两次（一 `ok` 一 `skipped:true`）、端口被占用降级触发文件（stderr 记录 + `control:"trigger-file"`
++ 触发文件与别名均可用）、`disabled` 不发 HTTP。**仍未 overlay**：安装目录跑的是 19:31 的上一版
+（无控制端点，19225/19226 未监听），需 A 在集成阶段 overlay + 重启这两个 unit 后，Surface 才可调用；
+集成后按第 8 节复验一次。
+
+## 6. 发布 + 控制契约（router API；发布只读，控制面增量）
+
+### 6.1 发布（本工具与路由器 cron 共用）
 
 - 快照：`POST {publisherUrl}/api/v1/sources/<source_id>/snapshot`
 - Schema `xbrd.source.snapshot.v1`；必填 `schema, schema_version, source_id, ttl_s, status, changed_fields`
 - `ttl_s` ∈ [5, 172800]；`status` ∈ `ok|degraded|error|stale`
 - 本工具负责的 source id：`quota.mem`（kind `quota`，panel key `mem`）、`quota.codex`（panel key `codex`）
-- **不触碰** `quota.proxy` / `quota.mes`（UI Quota Worker 发布）、`quota.glm` / `quota.deepseek` /
-  `quota.lab` / `weather.minhang`（路由器 cron 发布）、`plan.smoke`（开发残留，待注销）
+- **不触碰**他人的生产者：`quota.proxy` / `quota.mes`（UI Quota Worker）、`quota.glm` /
+  `quota.deepseek` / `quota.lab` / `weather.minhang`（路由器 cron）、`plan.smoke`（开发残留）
+
+### 6.2 控制面（D2 冻结接口，Surface 按此对接，不得改名）
+
+| 方法/路径 | 语义 |
+|---|---|
+| `GET /api/v1/sources` | 现有只读接口；每个来源**新增** `enabled` 与 `capabilities`（自描述可用动作子集：`refresh\|disable\|log\|delete`） |
+| `GET /api/v1/sources/<id>/log?lines=200` | tail 该来源的运行日志；返回 `{ ok, log_path, lines[], truncated }` |
+| `POST /api/v1/sources/<id>/refresh` | **立即真跑该来源的采集插件**（不是重读摘要）；返回 `{ ok, started_at, duration_ms, exit_code, snapshot_updated, stdout_tail, error }` |
+| `POST /api/v1/sources/<id>/disable` | 停用该来源（见下方语义） |
+| `POST /api/v1/sources/<id>/enable` | 恢复启用 |
+| `DELETE /api/v1/sources/<id>` | 注销：从状态与 panel 中移除（**仅无生产者的残留来源**） |
+
+响应统一 `{ "ok": bool, ... }`。
+
+**capabilities 矩阵（由发布器自描述）**
+
+| 来源类别 | 例子 | capabilities |
+|---|---|---|
+| 路由器 cron | `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | `refresh` + `disable` + `log`；**不给 `delete`**（cron 会重新上报，停用才是正解） |
+| 无生产者残留 | `plan.smoke` | 只有 `delete` |
+| UI Quota（Windows UI Quota Worker 产出，本机处理） | `quota.proxy` / `quota.mes` | 路由器侧**不给任何能力** |
+| MPT Service Unit 产出（本机处理） | `quota.mem` / `quota.codex` | 路由器侧**不给任何能力** |
+
+**语义（逐条）**
+
+- **`refresh` 必须真跑**：在容器内执行该来源的采集插件——就是 cron 现在 `docker exec` 的同一件事，
+  读同一套 `/data/plugins/secrets/*.env`；执行后经既有 snapshot 通路更新状态。
+  **并发保护**：同一来源同时只允许一个 refresh，第二次返回 `409` 或排队标记。
+  **失败要如实返回**：例如 `quota.glm` 当前是 `Authentication Failed`，refresh 必须返回真实的
+  `exit_code` / `error` / `stdout_tail`，**不得假装成功**。
+- **`disable`**：持久化（如 `/data/source-control.json`）；此后**拒绝接受该来源的新快照**
+  （HTTP 200 但 `accepted:false`），**不计入 unhealthy/expired 统计**，
+  `/api/v1/sources` 里 `enabled:false` 且 `effective_status:"disabled"`，
+  **panel 保留最后一次 good 值**（不能让圆屏变空）。`enable` 反向恢复。
+- **`delete`**：从状态与 `/panel.json` 中移除该来源（含 panel 里对应 `quota.<key>` 条目），并清理其
+  snapshot 历史引用；**只允许无生产者的残留来源**，有生产者的来源只能 `disable`。
+- **`log`**：只允许白名单来源，路径限定 `/srv/iot/data/plugins/log/*-cron.log`；
+  **禁止目录穿越**（越界/非白名单一律 404）。
+- **兼容性**：不得改变现有路由、`xbrd.panel.v1` 契约、`/panel.json` 内容格式、
+  `/api/v1/sources` 既有字段；**只做增量**。
+
+**落地状态（2026-09-22 第一段实测）**：D2 尚未部署——`GET /api/v1/sources` 还没有
+`enabled`/`capabilities`（9 个来源的字段仍是旧的），`GET /api/v1/sources/quota.glm/log?lines=3`
+返回 **404**。本节是冻结目标；命中验收放集成段（第 8 节）。
 
 ## 7. 写作者所有权（不重叠）
 
@@ -294,6 +397,19 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
      验收时不要用它判定命令实现；
    - **Shell 命令面板是否展示 xbrd 命令 = UNCERTAIN（未实测）**，不得断言可用或不可用；
    - `state\modules\xbrd` / transport `indexed` 对本工具**不是**验收条件。
+
+9. **「管理机制」验收口径（2026-09-22，A3 重写）**：sources Tab 每一行动作都必须**真触发生产端**，
+   只改本地显示或只重读摘要一律判 FAIL。按来源类别分别验：
+
+   | 来源类别 | 动作 | 必须看到的证据 |
+   |---|---|---|
+   | 本工具 unit（`quota.mem` / `quota.codex`） | 行内「立即发布」 | `POST 127.0.0.1:19225\|19226/publish-now` 返回 `{ok,revision,duration_ms}`；`GET /api/v1/sources/<id>` 的 `age_s` **立刻归零**、`revision` 变化；**unit PID 不变**（证明没重启）；并发第二次返回 `skipped:true` 或 409 |
+   | 路由器 cron（`quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang`） | 「立即刷新」 | `POST /api/v1/sources/<id>/refresh` 真跑插件：返回体含 `exit_code`/`stdout_tail`；`quota.glm` 当前是认证失败，**必须如实返回失败**；`disable` 后一次快照返回 `accepted:false`、不计入 unhealthy/expired、`effective_status:"disabled"` 且 **panel 保留 last-good**；`enable` 恢复 |
+   | UI Quota（`quota.proxy` / `quota.mes`） | 「采集 / 打开验证窗口」 | 动作**在本机执行**（UI Quota Worker / `{xbrdRepoRoot}\scripts\` 脚本），不经路由器控制面；路由器侧 `capabilities` 为空 |
+   | 无生产者残留（`plan.smoke`） | 行内「注销」 | `DELETE /api/v1/sources/<id>` 后该来源从 `/api/v1/sources` 与 `/panel.json` 消失，`/health` 的 `source_count`/`expired_count` 相应变化 |
+
+   另外：`panel` Tab 在上述任何操作后都不受影响（仍是 `/panel-app/` 的配额 UI）；
+   `sources` Tab 的时间线**只记状态迁移**，不记「点击回声」（见第 9 节第 13 条）。
 
 ## 9. 已知约束与平台边界（2026-09，A 核实）
 
@@ -440,3 +556,16 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
       （`modules/<packageId>/**`）发生变化时，应一并失效
       `<dataRoot>\state\shell-home-tools.v1.pb`（或让 Shell 在 reconcile 后以 live tools 覆盖），
       否则任何工具改 route 的人都会看到「新 Shell + 旧 route」。
+
+13. **设计错误与纠正：只读 viewer 伪装成 manager（2026-09-22，Lead 自述 + A 记录）**。
+    背景：Lead 冻结第 6 节时只定义了**只读**发布契约，却让 Surface 的来源行提供了
+    「立即刷新 / 停用」按钮——这两个按钮后端没有任何控制能力，只能重读摘要或改本地显示，
+    即**假管理**（用户以为停用了来源，其实路由器还在接受它的快照）。
+    纠正（本轮 D2/C2/B2 三件事）：
+    - 控制面下沉到生产者：路由器加控制 API（第 6.2 节），unit 加 `publish-now`/`/state`（第 5 节）；
+    - Surface 按 `capabilities` 决定动作是否可用（有能力的才给按钮，没能力的禁用并说明原因）；
+    - 验收改成「每行动作必须真触发生产端」（第 8 节第 9 条）。
+    **UI 原则（新增，长期有效）：严禁在时间线/事件流里记录「点击回声」**——即「用户点了刷新」这类
+    交互事实不是状态，不得进时间线；时间线只记录**状态迁移**（source 的 `status`/`effective_status`/
+    `revision`/`age_s` 变化）。否则时间线被操作噪声淹没，真正要排障的降级链路反而找不到。
+    同理：点击的即时反馈留在按钮/Toast 上，不进日志与事件流。

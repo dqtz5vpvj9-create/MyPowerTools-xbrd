@@ -63,6 +63,9 @@ internal static class Program
     private const int PublishTimeoutSeconds = 8;
     private const int RevisionMaxLength = 64;
     private const int RevisionPrefixLength = 6; // "codex-"
+    private const int DefaultControlPort = 19226;
+    private const string TriggerFileName = "xbrd.codex-quota.trigger";
+    private const string TriggerAliasFileName = "xbrd.codex-quota.service.trigger";
 
     private static readonly string[] QuotaFieldNames = { "h5_left", "h5_reset", "d7_left", "d7_reset" };
     private static readonly Regex UnsafeRevisionChars = new("[^A-Za-z0-9_.-]+", RegexOptions.Compiled);
@@ -162,6 +165,21 @@ internal static class Program
         var lastGoodRevision = "";
         var failedTicks = 0;
 
+        // Immediate-publish control plane (CONTRACT.md section 5). Not started for --once/--dry-run:
+        // those already publish exactly once and exit.
+        ControlPlane? control = null;
+        if (!once)
+        {
+            control = new ControlPlane(
+                UnitId,
+                SourceId,
+                DefaultControlPort,
+                dataRoot,
+                TriggerFileName,
+                TriggerAliasFileName);
+            control.Start();
+        }
+
         while (!cts.IsCancellationRequested)
         {
             tick++;
@@ -173,7 +191,13 @@ internal static class Program
             var freshnessLabel = "-";
             int? httpStatus = null;
             var fields = EmptyQuotaFields();
+            var outcome = PublishOutcome.Aborted;
 
+            // The loop stays the only publisher: POST /publish-now (or the trigger file) merely asks
+            // for one more iteration, so a manual request can never publish concurrently with a tick.
+            control?.BeginPublish();
+            try
+            {
             if (enabled == false)
             {
                 status = "disabled";
@@ -268,7 +292,10 @@ internal static class Program
                 ["consecutiveFailures"] = consecutiveFailures,
                 ["error"] = error,
                 ["publisher"] = publisher,
-                ["intervalSeconds"] = intervalSeconds
+                ["intervalSeconds"] = intervalSeconds,
+                // "http" or "trigger-file": lets Surface discover the degraded mode, because in the
+                // degraded case GET /state is unreachable by definition.
+                ["control"] = control?.Mode ?? "off"
             };
             try
             {
@@ -303,21 +330,36 @@ internal static class Program
                 $"elapsed_ms={stopwatch.ElapsedMilliseconds}" +
                 (error.Length == 0 ? "" : $" error={error}")));
 
+                outcome = PublishOutcome.From(status, revision, httpStatus, stopwatch.ElapsedMilliseconds, error);
+            }
+            finally
+            {
+                control?.EndPublish(outcome);
+            }
+
             if (once)
             {
                 break;
             }
 
-            try
+            if (control is not null)
             {
-                await Task.Delay(interval, cts.Token).ConfigureAwait(false);
+                await control.WaitAsync(interval, cts.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            else
             {
-                break;
+                try
+                {
+                    await Task.Delay(interval, cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
+        control?.Dispose();
         Console.WriteLine(AsciiSafe($"[{UnitId}] stopped ticks={tick} failed={failedTicks}"));
         return once && failedTicks > 0 ? 1 : 0;
     }
@@ -883,7 +925,7 @@ internal static class Program
         => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
 
     /// <summary>Keeps stdout ASCII-only so redirected capture never suffers an encoding mismatch.</summary>
-    private static string AsciiSafe(string text)
+    internal static string AsciiSafe(string text)
     {
         if (text.All(static ch => ch is >= ' ' and <= '~'))
         {

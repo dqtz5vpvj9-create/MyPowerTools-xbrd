@@ -46,6 +46,9 @@ internal static class Program
     private const int PublishTimeoutSeconds = 8;
     private const double WarnCommitRatio = 0.85;
     private const double LimitCommitRatio = 0.95;
+    private const int DefaultControlPort = 19225;
+    private const string TriggerFileName = "xbrd.mem.trigger";
+    private const string TriggerAliasFileName = "xbrd.mem.service.trigger";
 
     private static readonly Regex UnsafeRevisionChars = new("[^A-Za-z0-9_.-]+", RegexOptions.Compiled);
     private static readonly Encoding NoBomUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
@@ -110,6 +113,21 @@ internal static class Program
         var lastGoodRevision = "";
         var failedTicks = 0;
 
+        // Immediate-publish control plane (CONTRACT.md section 5). Not started for --once/--dry-run:
+        // those already publish exactly once and exit.
+        ControlPlane? control = null;
+        if (!once)
+        {
+            control = new ControlPlane(
+                UnitId,
+                SourceId,
+                DefaultControlPort,
+                dataRoot,
+                TriggerFileName,
+                TriggerAliasFileName);
+            control.Start();
+        }
+
         while (!cts.IsCancellationRequested)
         {
             tick++;
@@ -119,112 +137,136 @@ internal static class Program
             string revision = "";
             string error = "";
             int? httpStatus = null;
+            var outcome = PublishOutcome.Aborted;
 
-            if (enabled == false)
+            // The loop stays the only publisher: POST /publish-now (or the trigger file) merely asks
+            // for one more iteration, so a manual request can never publish concurrently with a tick.
+            control?.BeginPublish();
+            try
             {
-                status = "disabled";
-            }
-            else
-            {
+                if (enabled == false)
+                {
+                    status = "disabled";
+                }
+                else
+                {
+                    try
+                    {
+                        var snapshot = BuildSnapshot();
+                        revision = snapshot["revision"]!.GetValue<string>();
+                        using var content = new StringContent(snapshot.ToJsonString(), Encoding.UTF8, "application/json");
+                        using var response = await http
+                            .PostAsync($"{publisher}/api/v1/sources/{SourceId}/snapshot", content, cts.Token)
+                            .ConfigureAwait(false);
+                        httpStatus = (int)response.StatusCode;
+                        var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            throw new InvalidOperationException(
+                                $"publisher returned HTTP {httpStatus}: {Truncate(body, 200)}");
+                        }
+
+                        if (BodyRejectsSnapshot(body))
+                        {
+                            throw new InvalidOperationException(
+                                $"publisher rejected the snapshot: {Truncate(body, 200)}");
+                        }
+
+                        status = "ok";
+                        lastGoodRevision = revision;
+                        consecutiveFailures = 0;
+                    }
+                    catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Never publish on failure: the router keeps last-good until TTL expiry.
+                        consecutiveFailures++;
+                        failedTicks++;
+                        status = "error";
+                        error = Truncate(ex.Message, 200);
+                        revision = lastGoodRevision;
+                    }
+                }
+
+                stopwatch.Stop();
+                var heartbeat = new JsonObject
+                {
+                    ["unit"] = UnitId,
+                    ["pid"] = Environment.ProcessId,
+                    ["observedAt"] = Iso(observedAt),
+                    ["status"] = status,
+                    ["httpStatus"] = httpStatus,
+                    ["revision"] = revision,
+                    ["lastGoodRevision"] = lastGoodRevision,
+                    ["consecutiveFailures"] = consecutiveFailures,
+                    ["error"] = error,
+                    ["publisher"] = publisher,
+                    ["intervalSeconds"] = intervalSeconds,
+                    // "http" or "trigger-file": lets Surface discover the degraded mode, because in the
+                    // degraded case GET /state is unreachable by definition.
+                    ["control"] = control?.Mode ?? "off"
+                };
                 try
                 {
-                    var snapshot = BuildSnapshot();
-                    revision = snapshot["revision"]!.GetValue<string>();
-                    using var content = new StringContent(snapshot.ToJsonString(), Encoding.UTF8, "application/json");
-                    using var response = await http
-                        .PostAsync($"{publisher}/api/v1/sources/{SourceId}/snapshot", content, cts.Token)
-                        .ConfigureAwait(false);
-                    httpStatus = (int)response.StatusCode;
-                    var body = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        throw new InvalidOperationException(
-                            $"publisher returned HTTP {httpStatus}: {Truncate(body, 200)}");
-                    }
-
-                    if (BodyRejectsSnapshot(body))
-                    {
-                        throw new InvalidOperationException(
-                            $"publisher rejected the snapshot: {Truncate(body, 200)}");
-                    }
-
-                    status = "ok";
-                    lastGoodRevision = revision;
-                    consecutiveFailures = 0;
+                    await File.WriteAllTextAsync(heartbeatFile, heartbeat.ToJsonString(), cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
-                    break;
                 }
                 catch (Exception ex)
                 {
-                    // Never publish on failure: the router keeps last-good until TTL expiry.
-                    consecutiveFailures++;
-                    failedTicks++;
-                    status = "error";
-                    error = Truncate(ex.Message, 200);
-                    revision = lastGoodRevision;
+                    error = Truncate($"heartbeat write failed: {ex.Message}", 200);
                 }
-            }
 
-            stopwatch.Stop();
-            var heartbeat = new JsonObject
-            {
-                ["unit"] = UnitId,
-                ["pid"] = Environment.ProcessId,
-                ["observedAt"] = Iso(observedAt),
-                ["status"] = status,
-                ["httpStatus"] = httpStatus,
-                ["revision"] = revision,
-                ["lastGoodRevision"] = lastGoodRevision,
-                ["consecutiveFailures"] = consecutiveFailures,
-                ["error"] = error,
-                ["publisher"] = publisher,
-                ["intervalSeconds"] = intervalSeconds
-            };
-            try
-            {
-                await File.WriteAllTextAsync(heartbeatFile, heartbeat.ToJsonString(), cts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cts.IsCancellationRequested)
-            {
-            }
-            catch (Exception ex)
-            {
-                error = Truncate($"heartbeat write failed: {ex.Message}", 200);
-            }
+                // Platform liveness heartbeat, separate from the JSON diagnostic above (see CONTRACT.md
+                // section 5). Failure is reported on stderr only and never perturbs the publish flow.
+                WritePlatformHeartbeat(
+                    platformHeartbeatFile,
+                    $"{Iso(observedAt)} {UnitId} tick={tick} status={status} pid={Environment.ProcessId}");
 
-            // Platform liveness heartbeat, separate from the JSON diagnostic above (see CONTRACT.md
-            // section 5). Failure is reported on stderr only and never perturbs the publish flow.
-            WritePlatformHeartbeat(
-                platformHeartbeatFile,
-                $"{Iso(observedAt)} {UnitId} tick={tick} status={status} pid={Environment.ProcessId}");
+                // Exactly one stdout line per tick. Stdout is forced to ASCII: localized exception
+                // messages (and any non-ASCII data root) would otherwise be written in the process
+                // code page while the ServiceManager decodes the redirected stream with its own
+                // encoding, producing mojibake in the logs viewer. The heartbeat file keeps the
+                // original UTF-8 text.
+                Console.WriteLine(AsciiSafe(
+                    $"[{UnitId}] tick={tick} status={status} http={httpStatus?.ToString(CultureInfo.InvariantCulture) ?? "-"} " +
+                    $"revision={(revision.Length == 0 ? "-" : revision)} elapsed_ms={stopwatch.ElapsedMilliseconds}" +
+                    (error.Length == 0 ? "" : $" error={error}")));
 
-            // Exactly one stdout line per tick. Stdout is forced to ASCII: localized exception
-            // messages (and any non-ASCII data root) would otherwise be written in the process
-            // code page while the ServiceManager decodes the redirected stream with its own
-            // encoding, producing mojibake in the logs viewer. The heartbeat file keeps the
-            // original UTF-8 text.
-            Console.WriteLine(AsciiSafe(
-                $"[{UnitId}] tick={tick} status={status} http={httpStatus?.ToString(CultureInfo.InvariantCulture) ?? "-"} " +
-                $"revision={(revision.Length == 0 ? "-" : revision)} elapsed_ms={stopwatch.ElapsedMilliseconds}" +
-                (error.Length == 0 ? "" : $" error={error}")));
+                outcome = PublishOutcome.From(status, revision, httpStatus, stopwatch.ElapsedMilliseconds, error);
+            }
+            finally
+            {
+                control?.EndPublish(outcome);
+            }
 
             if (once)
             {
                 break;
             }
 
-            try
+            if (control is not null)
             {
-                await Task.Delay(interval, cts.Token).ConfigureAwait(false);
+                await control.WaitAsync(interval, cts.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            else
             {
-                break;
+                try
+                {
+                    await Task.Delay(interval, cts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
 
+        control?.Dispose();
         Console.WriteLine(AsciiSafe($"[{UnitId}] stopped ticks={tick} failed={failedTicks}"));
         return once && failedTicks > 0 ? 1 : 0;
     }
@@ -478,7 +520,7 @@ internal static class Program
         => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
 
     /// <summary>Keeps stdout ASCII-only so redirected capture never suffers an encoding mismatch.</summary>
-    private static string AsciiSafe(string text)
+    internal static string AsciiSafe(string text)
     {
         if (text.All(static ch => ch is >= ' ' and <= '~'))
         {

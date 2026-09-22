@@ -186,6 +186,41 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
   `sources` Tab 的 Surface 按钮实现（B 负责），不放进 tool.json。
   所有本机进程启动必须 `UseShellExecute=false`/`CreateNoWindow=true` 或 `-NoNewWindow`（AGENTS.md）。
 
+## 来源管理：改前 vs 改后（「立即刷新」曾经只是重读）
+
+**改前（假管理）**：`sources` Tab 的行内按钮没有任何后端——路由器 `/api/v1/sources` 只有读，
+所以：
+
+- 「立即刷新」= 重新 `GET /api/v1/sources`（**只是重读摘要**，不会让任何采集器真的跑一次）；
+- 「停用 / 注销」= 只改本地显示，路由器照旧接受该来源的快照、照旧计入 unhealthy/expired 统计；
+- 「看日志」= 没有实现。
+
+用户以为停用了某个来源，实际它还在发布——这就是 **只读 viewer 伪装成 manager**（见 CONTRACT 第 9 节第 13 条）。
+
+**改后（真管理，动作落在生产者侧）**：
+
+| 动作 | 落在哪里 | 接口 |
+|---|---|---|
+| 路由器 cron 来源：立即刷新 / 停用 / 恢复 / 看日志 | 路由器容器内真跑该来源的插件 | `POST /api/v1/sources/<id>/refresh\|disable\|enable`、`GET .../log?lines=N`（CONTRACT 6.2） |
+| 无生产者残留（`plan.smoke`）：注销 | 路由器状态 + `/panel.json` | `DELETE /api/v1/sources/<id>` |
+| 本工具 unit（`quota.mem` / `quota.codex`）：立即发布 | **本机回环端点，不重启进程** | `POST 127.0.0.1:19225\|19226/publish-now`、`GET /state`（CONTRACT 第 5 节；端口占用时降级为触发文件） |
+| UI Quota（`quota.proxy` / `quota.mes`）：采集 / 验证窗口 | **本机动作**（UI Quota Worker / `{xbrdRepoRoot}\scripts\` 脚本） | 不经路由器控制面 |
+
+各来源类别的管理能力矩阵（路由器自描述 `capabilities`，Surface 据此决定按钮可用性）：
+
+| 来源类别 | 例子 | 刷新 | 停用/恢复 | 注销 | 日志 | 动作执行方 |
+|---|---|---|---|---|---|---|
+| 路由器 cron | `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | ✅ | ✅ | ❌（cron 会重新上报） | ✅ | 路由器 |
+| 无生产者残留 | `plan.smoke` | ❌ | ❌ | ✅ | ❌ | 路由器 |
+| 本工具 unit | `quota.mem` / `quota.codex` | ✅（立即发布） | 由 unit 启停 / `enable*Source` 设置 | ❌ | 工具根 JSON 心跳 / unit 日志 | 本机 unit |
+| UI Quota | `quota.proxy` / `quota.mes` | ✅（本机脚本） | 本机 | ❌ | 本机 | 本机 UI Quota Worker |
+
+两条硬规则：
+
+1. **每个动作必须真触发生产端**（CONTRACT 第 8 节第 9 条）；只改本地显示一律判 FAIL。
+2. **时间线只记状态迁移，不记「点击回声」**：`source.status/effective_status/revision/age_s` 的变化才进
+   时间线；「用户点了刷新」这类交互事实不进（点击反馈留在按钮/Toast），否则排障链路会被噪声淹没。
+
 ## 迁移注意（避免双跑）
 
 启用本工具的两个 Service Unit 前，必须先停掉 esp32-screen 侧的重复生产者，否则同一

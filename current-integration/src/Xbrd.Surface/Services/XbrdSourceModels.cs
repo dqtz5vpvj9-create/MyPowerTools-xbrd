@@ -33,6 +33,58 @@ public static class XbrdSeverityExtensions
 }
 
 /// <summary>
+/// Control capabilities a publisher declares for one source (frozen names from CONTRACT §6:
+/// <c>refresh</c> / <c>disable</c> / <c>log</c> / <c>delete</c>). The Surface never shows an action
+/// the publisher did not declare, and says so when the publisher declares nothing at all.
+/// </summary>
+public sealed record XbrdCapabilitySet(bool Refresh, bool Disable, bool Delete, bool Log)
+{
+    public static XbrdCapabilitySet None { get; } = new(false, false, false, false);
+
+    public static XbrdCapabilitySet From(IReadOnlyList<string>? capabilities)
+    {
+        if (capabilities is null || capabilities.Count == 0)
+        {
+            return None;
+        }
+
+        var set = new HashSet<string>(capabilities, StringComparer.OrdinalIgnoreCase);
+        return new XbrdCapabilitySet(set.Contains("refresh"), set.Contains("disable"), set.Contains("delete"), set.Contains("log"));
+    }
+
+    public bool Any => Refresh || Disable || Delete || Log;
+
+    public string Text
+    {
+        get
+        {
+            var parts = new List<string>(4);
+            if (Refresh)
+            {
+                parts.Add("refresh");
+            }
+
+            if (Disable)
+            {
+                parts.Add("disable/enable");
+            }
+
+            if (Log)
+            {
+                parts.Add("log");
+            }
+
+            if (Delete)
+            {
+                parts.Add("delete");
+            }
+
+            return string.Join(" · ", parts);
+        }
+    }
+}
+
+/// <summary>
 /// One row of <c>GET {publisherUrl}/api/v1/sources</c> (schema <c>xbrd.source.summary.v1</c>).
 /// Field names are frozen by CONTRACT.md §6; parsing is tolerant so an older publisher that
 /// omits optional fields still renders instead of failing the whole table.
@@ -49,21 +101,40 @@ public sealed record XbrdSourceSummary(
     DateTimeOffset? ReceivedAt,
     string Revision,
     IReadOnlyList<string> ChangedFields,
-    string Error)
+    string Error,
+    bool Enabled = true,
+    IReadOnlyList<string>? Capabilities = null,
+    bool CapabilitiesDeclared = false)
 {
     public bool HasError => !string.IsNullOrWhiteSpace(Error);
 
+    /// <summary>Publisher-declared control capabilities of this source (frozen names, CONTRACT §6).</summary>
+    public XbrdCapabilitySet CapabilitySet { get; } = XbrdCapabilitySet.From(Capabilities);
+
+    public bool CanRefresh => CapabilitySet.Refresh;
+
+    public bool CanDisable => CapabilitySet.Disable;
+
+    public bool CanDelete => CapabilitySet.Delete;
+
+    public bool CanLog => CapabilitySet.Log;
+
+    public string EnabledText => Enabled ? "已启用" : "已停用";
+
     /// <summary>Worst-case reading of the publisher's own status + effective_status + expired flag.</summary>
-    public XbrdSeverity Severity => EffectiveStatus switch
-    {
-        "error" => XbrdSeverity.Error,
-        "degraded" => XbrdSeverity.Degraded,
-        "stale" => XbrdSeverity.Degraded,
-        "ok" => Expired ? XbrdSeverity.Degraded : XbrdSeverity.Ready,
-        _ => string.Equals(Status, "error", StringComparison.OrdinalIgnoreCase)
-            ? XbrdSeverity.Error
-            : XbrdSeverity.Degraded
-    };
+    public XbrdSeverity Severity => !Enabled
+        ? XbrdSeverity.Degraded
+        : EffectiveStatus switch
+        {
+            "error" => XbrdSeverity.Error,
+            "degraded" => XbrdSeverity.Degraded,
+            "stale" => XbrdSeverity.Degraded,
+            "disabled" => XbrdSeverity.Degraded,
+            "ok" => Expired ? XbrdSeverity.Degraded : XbrdSeverity.Ready,
+            _ => string.Equals(Status, "error", StringComparison.OrdinalIgnoreCase)
+                ? XbrdSeverity.Error
+                : XbrdSeverity.Degraded
+        };
 
     public string PillToken => Severity.ToToken();
 
@@ -74,7 +145,8 @@ public sealed record XbrdSourceSummary(
             var effective = string.IsNullOrWhiteSpace(EffectiveStatus) ? "unknown" : EffectiveStatus;
             var status = string.IsNullOrWhiteSpace(Status) ? "unknown" : Status;
             var suffix = Expired ? " · 已过期" : "";
-            return effective == status ? $"{effective}{suffix}" : $"{effective}（{status}）{suffix}";
+            var stateText = Enabled ? "" : " · 已停用";
+            return effective == status ? $"{effective}{suffix}{stateText}" : $"{effective}（{status}）{suffix}{stateText}";
         }
     }
 
@@ -116,10 +188,14 @@ public sealed record XbrdSourceSummary(
 
     public string OwnerText => XbrdSourceOwnership.OwnerTextFor(SourceId);
 
-    /// <summary>Row action that is meaningful for this source (unit control vs. publisher-side hint).</summary>
+    /// <summary>What this tool can actually do with the source, given who produces it.</summary>
     public string ManageHint => IsOwnedByThisTool
-        ? $"由本工具的 {OwnerUnitId} 发布：停用/启用即停止或恢复该 Service Unit。"
-        : $"由 {OwnerText} 发布：本工具不能注销该来源，请在该发布端停用。";
+        ? $"由本工具的 {OwnerUnitId} 发布：立即发布 = 调用该 unit 的 /publish-now；停用/启用 = 停止或启动该 Service Unit。"
+        : !CapabilitiesDeclared
+            ? "路由器未提供控制面（无 capabilities 字段）：这是旧发布器，只有本地动作可用。"
+            : CapabilitySet.Any
+                ? $"路由器控制面能力：{CapabilitySet.Text}。停用后发布器拒绝接受新快照且不计入健康统计。"
+                : "路由器未对该来源声明控制能力（生产者不在路由器，需在对应发布端处理）。";
 }
 
 /// <summary>
@@ -172,6 +248,10 @@ public static class XbrdSourceOwnership
         "quota.codex" => CodexQuotaServiceUnitId,
         _ => null
     };
+
+    /// <summary>Sources produced by the local UI Quota Worker (managed with local actions only).</summary>
+    public static bool IsUiQuotaSource(string sourceId) =>
+        sourceId is "quota.proxy" or "quota.mes";
 
     /// <summary>Human-readable publisher for sources this tool must not touch (CONTRACT.md §6).</summary>
     public static string OwnerTextFor(string sourceId) => sourceId switch
@@ -228,6 +308,22 @@ public sealed record XbrdSourcesSnapshot(
     public string SummaryText => Ok
         ? $"共 {Count} 个来源 · 过期 {ExpiredCount} · 异常 {UnhealthyCount}"
         : "来源清单不可用";
+
+    /// <summary>
+    /// False when the publisher answered without any <c>capabilities</c> field — i.e. an older
+    /// router build whose actions would 404. The UI then hides router actions and says why.
+    /// </summary>
+    public bool ControlPlaneAvailable => Ok && Sources.Any(static source => source.CapabilitiesDeclared);
+
+    public int DisabledCount => Sources.Count(static source => !source.Enabled);
+
+    public int RefreshableCount => Sources.Count(static source => source.CanRefresh);
+
+    public string ControlPlaneText => !Ok
+        ? "路由器不可达"
+        : ControlPlaneAvailable
+            ? $"控制面可用 · 可刷新 {RefreshableCount} · 已停用 {DisabledCount}"
+            : "旧发布器：无 capabilities 控制面，行内只有本地动作可用";
 }
 
 /// <summary>Payload of <c>GET {publisherUrl}/health</c> plus the probe outcome.</summary>
