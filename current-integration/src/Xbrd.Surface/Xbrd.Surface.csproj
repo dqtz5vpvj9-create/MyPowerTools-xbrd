@@ -5,8 +5,12 @@
     <Nullable>enable</Nullable>
     <AssemblyName>Xbrd.Surface</AssemblyName>
     <RootNamespace>Xbrd.Surface</RootNamespace>
+    <!-- The tool is registered in scripts/build-all-tools.ps1, which packs every Surface
+         project; IsPackable=false made `dotnet pack` emit nothing, so
+         build-tool-packages failed. Match the other first-party Surfaces. -->
+    <IsPackable>true</IsPackable>
+    <PackageId>Xbrd.Surface</PackageId>
     <Version>0.1.0</Version>
-    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

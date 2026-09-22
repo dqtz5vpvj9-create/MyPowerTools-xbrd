@@ -1,6 +1,6 @@
 {
   "publisherUrl": "http://ow.lixinrui000.cn:8080",
-  "panelUrl": "http://ow.lixinrui000.cn:8080/panel",
+  "panelUrl": "http://ow.lixinrui000.cn:8080/panel.json",
   "xbrdRepoRoot": "C:\\Users\\lixinrui\\repo\\esp32-screen",
   "connectionTimeoutMs": 5000,
   "autoRefresh": true,

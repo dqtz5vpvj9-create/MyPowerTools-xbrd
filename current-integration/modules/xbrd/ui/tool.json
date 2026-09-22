@@ -14,7 +14,7 @@
     {
       "routeId": "panel",
       "surfaceId": "xbrd.panel",
-      "title": "面板",
+      "title": "面板数据",
       "icon": "route.overview",
       "surface": {
         "kind": "web",

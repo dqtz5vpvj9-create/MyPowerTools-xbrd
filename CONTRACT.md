@@ -22,8 +22,15 @@
 
 | routeId | title | surface.kind | 目标 |
 |---|---|---|---|
-| `panel` | 面板 | `web` | `${settings.panelUrl}`（默认 `http://ow.lixinrui000.cn:8080/panel`；`openExternal: true`，`allowedOrigins: ["${settings.publisherUrl}"]`） |
+| `panel` | 面板数据 | `web` | `${settings.panelUrl}`（默认 `http://ow.lixinrui000.cn:8080/panel.json`；`openExternal: true`，`allowedOrigins: ["${settings.publisherUrl}"]`） |
 | `sources` | 来源与配额 | `dotnet` | `surface/Xbrd.Surface.dll`，类型 `Xbrd.Surface.XbrdSurfaceFactory` |
+
+**面板 Tab 是设备原始 panel JSON 的只读视图（2026-09，Lead 核实 + A 复验）。** 路由器**没有** HTML
+管理页：`GET /` 是 `text/html` 的 499 字节 stub（标题 + Health/Info/panel.json 链接，body 里自己写着
+“Use `/panel.json` as the ESP32 panel URL”），`GET /panel` 与 `GET /panel.json` 返回同一 handler
+（`application/json`，1451 字节，esp32-screen `app.py:1410-1412`）。因此 route `panel` 里 WebView 显示的
+就是这段原始 JSON 文本，属于**排障用的只读视图**；给人看的「面板数据预览」卡片由 `sources` Tab
+（B 的原生 Surface）提供。别再把它当成路由器管理页，也不要为此给路由器加 HTML 页。
 
 **2026-09 修正（A 包与集成）**：route 的 `source` 与 `allowedOrigins` 由字面量改成 `${settings.*}`
 token，默认值与原来完全一致。原因：`settings.panelUrl` / `settings.publisherUrl` 已冻结为设置 key，
@@ -45,9 +52,6 @@ token，默认值与原来完全一致。原因：`settings.panelUrl` / `setting
 注意 `module.json` 的 http entrypoint `baseUrl` 无法使用 token（模块清单没有设置展开机制），
 改发布器地址时必须同时改那里，见第 9 节。
 
-注意 `module.json` 的 http entrypoint `baseUrl` 无法使用 token（模块清单没有设置展开机制），
-改发布器地址时必须同时改那里，见第 9 节。
-
 `surface/Xbrd.Surface.dll` 是相对 **tool.json 所在目录**（`ui/`）的路径：dev overlay 会把
 `*.Surface.csproj` 的产物复制到 `ui/surface/`（见 `update-windows-dev.ps1:662`）。
 
@@ -56,7 +60,7 @@ token，默认值与原来完全一致。原因：`settings.panelUrl` / `setting
 | key | 类型 | 默认 | 说明 |
 |---|---|---|---|
 | `publisherUrl` | string | `http://ow.lixinrui000.cn:8080` | 路由器发布器 |
-| `panelUrl` | string | `http://ow.lixinrui000.cn:8080/panel` | 内嵌面板页 |
+| `panelUrl` | string | `http://ow.lixinrui000.cn:8080/panel.json` | 设备原始 panel JSON（面板 Tab 只读视图） |
 | `xbrdRepoRoot` | string | `C:\Users\lixinrui\repo\esp32-screen` | 采集脚本所在 checkout |
 | `connectionTimeoutMs` | integer | `5000` | 探测超时 |
 | `autoRefresh` | boolean | `true` | surface 自动刷新 |
@@ -203,6 +207,19 @@ CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`，`BreakawayProcessStarter.cs:117`�
 状态**，因为进程随时可能被强杀。两个 unit 已按此实现（每 tick 重新采集并整包 POST）。
 优雅停机留作后续，见第 9 节第 8 条。
 
+#### 心跳：两份，分工不同（v1，C 实现）
+
+每个 unit 每 tick 同时写两份心跳，路径与格式都不同，不要混用：
+
+| 文件 | 路径 | 格式 | 用途 |
+|---|---|---|---|
+| **平台存活心跳** | `%MPT_DATA_ROOT%\state\<unitId>.heartbeat`（`MPT_DATA_ROOT` 缺省时回落 `%LOCALAPPDATA%\MyPowerTools`；也接受 `--heartbeat-file <path>` 覆盖） | 单行 ASCII 摘要（ISO8601 UTC + unitId + tick + status + pid，约 70 B，**覆盖写**） | `verify-release-candidate.remote.ps1` 的 `A5.R3` 只做 `Test-Path "$dataRoot\state\$unitId.heartbeat"` 判存活；`build-installer.ps1` / 系统服务页同源。**禁止**做成追加式日志 |
+| **工具根 JSON 心跳** | `%MPT_TOOL_DATA_ROOT%\<unitId>.heartbeat` | 单行 UTF-8 JSON（status/revision/数值/error 等诊断字段） | Surface「来源与配额」页的诊断数据源（B 消费）；面向人排障，不是门禁契约 |
+
+两份都必须是**小文件覆盖写**：门禁只查存在性，增长没有意义。平台心跳写失败只写 stderr，
+不影响发布主流程。**必须跟随 `MPT_DATA_ROOT`**：远程门禁把 unit 装进隔离的临时 data root
+（`verify-release-candidate.remote.ps1:204-207`），写死 `%LOCALAPPDATA%` 会导致 `A5.R3` FAIL。
+
 ## 6. 发布契约（router API，只读，不改路由器）
 
 - 快照：`POST {publisherUrl}/api/v1/sources/<source_id>/snapshot`
@@ -295,3 +312,11 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
    在那条路径上就是 now，永不 stale），套用只会把真正新鲜的数据误判为 degraded。
    **v2 后续项**：在该 record 上加 `ObservedAt`（MPT 主仓改动，非本工具写作者范围），
    即可去掉 mtime 代理。另：v1 的优雅停机（readiness `pipe` 或停机文件）也属 v2，见第 5 节。
+
+9. **后续项：工具图标 glyph（本次不做，2026-09，Lead 决定）**。
+   `ui/tool.json` 的 `icon` 是 `tool.external`，而 `ShellToolProductService.IconGlyph`
+   （`src/MyPowerTools.Shell.Avalonia/Services/ShellToolProductService.cs:177-191`）只登记了
+   adb-forwarder / remote-notifications / remote-commands / process-monitor / screenease /
+   input-monitor / doubao-agent / smartbird-thermostat，未登记 `tool.xbrd`，于是工具卡片回退成
+   title 首字母 `X屏`。若要显示专用 glyph，需要在 Shell 里加一行
+   `"tool.xbrd" => "XB"` 并重编 Shell；**成本高于收益，本次不改 Shell**，仅作为后续项记录。

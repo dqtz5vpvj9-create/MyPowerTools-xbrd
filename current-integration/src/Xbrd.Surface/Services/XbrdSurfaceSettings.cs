@@ -27,7 +27,12 @@ public sealed record XbrdSurfaceSettings(
     string FallbackReason = "")
 {
     public const string ContractDefaultPublisherUrl = "http://ow.lixinrui000.cn:8080";
-    public const string ContractDefaultPanelUrl = "http://ow.lixinrui000.cn:8080/panel";
+
+    /// <summary>
+    /// The router has no HTML admin page: <c>/panel</c> serves the same JSON as <c>/panel.json</c>,
+    /// so the default points the WebView route at the JSON document (see the 面板数据预览 card).
+    /// </summary>
+    public const string ContractDefaultPanelUrl = "http://ow.lixinrui000.cn:8080/panel.json";
     public const string ContractDefaultRepoRoot = @"C:\Users\lixinrui\repo\esp32-screen";
 
     public static XbrdSurfaceSettings Fallback(string reason) => new(

@@ -47,6 +47,24 @@ public sealed class XbrdPublisherClient : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads the panel document. The router has no HTML page (<c>/panel</c> serves the same JSON),
+    /// so this is the tool's only view of the panel's real content.
+    /// </summary>
+    public async Task<XbrdPanelSnapshot> GetPanelAsync(string publisherUrl, CancellationToken cancellationToken)
+    {
+        var endpoint = BuildEndpoint(publisherUrl, "/panel.json");
+        try
+        {
+            var (body, _) = await GetStringAsync(endpoint, cancellationToken);
+            return XbrdPanelParser.Parse(body, endpoint);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or UriFormatException or JsonException)
+        {
+            return XbrdPanelSnapshot.Failed(endpoint, Describe(ex, cancellationToken));
+        }
+    }
+
     public static string BuildEndpoint(string publisherUrl, string path)
     {
         var root = (publisherUrl ?? "").Trim();

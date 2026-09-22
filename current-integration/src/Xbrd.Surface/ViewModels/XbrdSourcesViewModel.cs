@@ -48,6 +48,7 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
     private string _lastActionResult = "";
     private string _unitLogText = "（尚未读取日志）";
     private string _lastUpdatedText = "—";
+    private XbrdPanelSnapshot _panelPreview = XbrdPanelSnapshot.Empty;
     private bool _disposed;
 
     public XbrdSourcesViewModel(MptAvaloniaSurfaceContext context)
@@ -142,6 +143,54 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
         get => _snapshotFocusText;
         private set => SetProperty(ref _snapshotFocusText, value);
     }
+
+    // ---------------------------------------------------------------- panel preview
+
+    /// <summary>
+    /// The router serves JSON (there is no HTML admin page), so the panel's real content is
+    /// previewed here from <c>GET {publisherUrl}/panel.json</c>. Read-only.
+    /// </summary>
+    public ObservableCollection<XbrdPanelField> PanelStatusFields { get; } = [];
+
+    public ObservableCollection<XbrdPanelField> PanelWeatherFields { get; } = [];
+
+    public ObservableCollection<XbrdPanelField> PanelPlanFields { get; } = [];
+
+    public ObservableCollection<XbrdPanelQuotaRow> PanelQuotaRows { get; } = [];
+
+    public string PanelPreviewPillToken => _panelPreview.PillToken;
+
+    public string PanelPreviewLabel => _panelPreview.Ok ? _panelPreview.StatusSeverity.ToLabel() : "不可用";
+
+    public bool PanelPreviewIsReady => _panelPreview.Ok && _panelPreview.IsReady;
+
+    public bool PanelPreviewIsDegraded => _panelPreview.Ok && _panelPreview.IsDegraded;
+
+    public bool PanelPreviewIsError => !_panelPreview.Ok || _panelPreview.IsError;
+
+    public bool HasPanelPreviewError => _panelPreview.HasError;
+
+    public string PanelPreviewErrorText => _panelPreview.ErrorText;
+
+    public string PanelPreviewUpdatedText => _panelPreview.UpdatedText;
+
+    public string PanelPreviewEndpoint => _panelPreview.Endpoint;
+
+    public string PanelPreviewMetaText => _panelPreview.Ok
+        ? $"{_panelPreview.SchemaText} · {_panelPreview.CountsText} · 读取于 {XbrdFormat.Time(_panelPreview.FetchedAt)}"
+        : $"读取失败 · {XbrdFormat.Time(_panelPreview.FetchedAt)}";
+
+    public bool HasPanelStatus => PanelStatusFields.Count > 0;
+
+    public bool HasPanelWeather => PanelWeatherFields.Count > 0;
+
+    public bool HasPanelPlan => PanelPlanFields.Count > 0;
+
+    public bool HasPanelQuota => PanelQuotaRows.Count > 0;
+
+    public bool HasPanelPlanTodos => _panelPreview.TodosText.Length > 0;
+
+    public string PanelPlanTodosText => _panelPreview.TodosText;
 
     // ---------------------------------------------------------------- collectors / units
 
@@ -385,14 +434,16 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
             var token = _lifetime.Token;
             var healthTask = _publisher.GetHealthAsync(_settings.PublisherUrl, token);
             var sourcesTask = LoadSourcesAsync(token);
+            var panelTask = _publisher.GetPanelAsync(_settings.PublisherUrl, token);
             var unitsTask = LoadServiceUnitsAsync(token);
             var taskTask = _local.QueryUiQuotaTaskAsync(token);
 
-            await Task.WhenAll(healthTask, sourcesTask, unitsTask, taskTask).ConfigureAwait(true);
+            await Task.WhenAll(healthTask, sourcesTask, unitsTask, taskTask, panelTask).ConfigureAwait(true);
 
             _health = healthTask.Result;
             RaiseHealth();
             ApplySources(sourcesTask.Result);
+            ApplyPanel(panelTask.Result);
             ApplyServiceUnits(unitsTask.Result);
             UiQuotaTask = taskTask.Result;
             OnPropertyChanged(nameof(UiQuotaTask));
@@ -792,9 +843,54 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
         RaiseUnits();
     }
 
-    private void RaiseHealth()
+    private void ApplyPanel(XbrdPanelSnapshot snapshot)
     {
-        OnPropertyChanged(nameof(PanelPillToken));
+        _panelPreview = snapshot;
+
+        PanelStatusFields.Clear();
+        foreach (var field in snapshot.StatusFields)
+        {
+            PanelStatusFields.Add(field);
+        }
+
+        PanelWeatherFields.Clear();
+        foreach (var field in snapshot.WeatherFields)
+        {
+            PanelWeatherFields.Add(field);
+        }
+
+        PanelPlanFields.Clear();
+        foreach (var field in snapshot.PlanFields)
+        {
+            PanelPlanFields.Add(field);
+        }
+
+        PanelQuotaRows.Clear();
+        foreach (var row in snapshot.QuotaRows)
+        {
+            PanelQuotaRows.Add(row);
+        }
+
+        OnPropertyChanged(nameof(PanelPreviewPillToken));
+        OnPropertyChanged(nameof(PanelPreviewLabel));
+        OnPropertyChanged(nameof(PanelPreviewIsReady));
+        OnPropertyChanged(nameof(PanelPreviewIsDegraded));
+        OnPropertyChanged(nameof(PanelPreviewIsError));
+        OnPropertyChanged(nameof(HasPanelPreviewError));
+        OnPropertyChanged(nameof(PanelPreviewErrorText));
+        OnPropertyChanged(nameof(PanelPreviewUpdatedText));
+        OnPropertyChanged(nameof(PanelPreviewEndpoint));
+        OnPropertyChanged(nameof(PanelPreviewMetaText));
+        OnPropertyChanged(nameof(HasPanelStatus));
+        OnPropertyChanged(nameof(HasPanelWeather));
+        OnPropertyChanged(nameof(HasPanelPlan));
+        OnPropertyChanged(nameof(HasPanelQuota));
+        OnPropertyChanged(nameof(HasPanelPlanTodos));
+        OnPropertyChanged(nameof(PanelPlanTodosText));
+    }
+
+    private void RaiseHealth()
+    {        OnPropertyChanged(nameof(PanelPillToken));
         OnPropertyChanged(nameof(PanelLabel));
         OnPropertyChanged(nameof(PanelDetail));
         OnPropertyChanged(nameof(PanelEndpoint));

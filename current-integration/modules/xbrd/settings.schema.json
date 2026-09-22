@@ -12,9 +12,9 @@
     },
     "panelUrl": {
       "type": "string",
-      "title": "内嵌面板地址",
-      "description": "面板 Tab 内嵌的页面；其 origin 必须同时出现在 ui/tool.json 的 allowedOrigins 中。",
-      "default": "http://ow.lixinrui000.cn:8080/panel"
+      "title": "设备 panel JSON 地址",
+      "description": "面板 Tab 内嵌的设备原始 panel JSON（application/json）。路由器没有 HTML 管理页：GET / 只有 499 字节的标题+链接 stub，且它自己写着 Use /panel.json as the ESP32 panel URL；/panel 与 /panel.json 是同一 handler（esp32-screen app.py:1410-1412）。该 URL 的 origin 必须同时出现在 ui/tool.json 的 allowedOrigins 中。",
+      "default": "http://ow.lixinrui000.cn:8080/panel.json"
     },
     "xbrdRepoRoot": {
       "type": "string",

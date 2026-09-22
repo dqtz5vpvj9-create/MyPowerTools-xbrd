@@ -48,6 +48,7 @@ internal static class Program
     private const double LimitCommitRatio = 0.95;
 
     private static readonly Regex UnsafeRevisionChars = new("[^A-Za-z0-9_.-]+", RegexOptions.Compiled);
+    private static readonly Encoding NoBomUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private static async Task<int> Main(string[] args)
     {
@@ -59,6 +60,7 @@ internal static class Program
         var dataRoot = ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
         var heartbeatFile = Path.Combine(dataRoot, UnitId + ".heartbeat");
+        var platformHeartbeatFile = ResolvePlatformHeartbeatPath(args);
 
         if (dryRun)
         {
@@ -191,6 +193,12 @@ internal static class Program
             {
                 error = Truncate($"heartbeat write failed: {ex.Message}", 200);
             }
+
+            // Platform liveness heartbeat, separate from the JSON diagnostic above (see CONTRACT.md
+            // section 5). Failure is reported on stderr only and never perturbs the publish flow.
+            WritePlatformHeartbeat(
+                platformHeartbeatFile,
+                $"{Iso(observedAt)} {UnitId} tick={tick} status={status} pid={Environment.ProcessId}");
 
             // Exactly one stdout line per tick. Stdout is forced to ASCII: localized exception
             // messages (and any non-ASCII data root) would otherwise be written in the process
@@ -335,6 +343,78 @@ internal static class Program
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Platform liveness heartbeat path, i.e. <c>&lt;MPT_DATA_ROOT&gt;\state\&lt;unitId&gt;.heartbeat</c>.
+    ///
+    /// <c>scripts/configure-user-services.ps1</c> injects <c>MPT_DATA_ROOT</c> into every unit and
+    /// rewrites a declared <c>--heartbeat-file</c> argument to that path;
+    /// <c>scripts/verify-release-candidate.remote.ps1</c> then installs into an isolated temp data
+    /// root and only checks <c>Test-Path "$dataRoot\state\$unitId.heartbeat"</c>. Following
+    /// <c>MPT_DATA_ROOT</c> (instead of hard-coding <c>%LOCALAPPDATA%\MyPowerTools</c>) is what makes
+    /// that gate pass; the fallback keeps manual runs on the same path as a normal install.
+    /// </summary>
+    private static string ResolvePlatformHeartbeatPath(string[] args)
+    {
+        var explicitPath = ReadOption(args, "--heartbeat-file");
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+        {
+            return explicitPath.Trim();
+        }
+
+        var platformRoot = Environment.GetEnvironmentVariable("MPT_DATA_ROOT");
+        if (string.IsNullOrWhiteSpace(platformRoot))
+        {
+            platformRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "MyPowerTools");
+        }
+
+        return Path.Combine(platformRoot.Trim(), "state", UnitId + ".heartbeat");
+    }
+
+    /// <summary>
+    /// Overwrites a tiny single-line heartbeat. Deliberately not an append-only log: the release gate
+    /// only tests for existence, so the file must stay small no matter how long the unit runs.
+    /// </summary>
+    private static void WritePlatformHeartbeat(string path, string summary)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(path, summary + Environment.NewLine, NoBomUtf8);
+        }
+        catch (Exception ex)
+        {
+            // Never let the liveness file affect publishing; stderr keeps stdout at one line per tick.
+            Console.Error.WriteLine(AsciiSafe($"[{UnitId}] platform heartbeat write failed ({path}): {ex.Message}"));
+        }
+    }
+
+    private static string? ReadOption(string[] args, string name)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            var argument = args[index];
+            if (string.Equals(argument, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return index + 1 < args.Length ? args[index + 1] : null;
+            }
+
+            var prefix = name + "=";
+            if (argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return argument[prefix.Length..];
+            }
+        }
+
+        return null;
     }
 
     private static string ResolveDataRoot()

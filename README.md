@@ -2,7 +2,7 @@
 
 XBRD 圆屏的 MyPowerTools 集成：一个工具、两个 Tab。
 
-- **面板**：内嵌路由器管理页（`settings.panelUrl`，默认 `http://ow.lixinrui000.cn:8080/panel`，Web Surface，只读，不改路由器）。
+- **面板数据**：设备**原始 panel JSON** 的只读视图（`settings.panelUrl`，默认 `http://ow.lixinrui000.cn:8080/panel.json`，Web Surface）。路由器**没有** HTML 管理页：`GET /` 只是 499 字节的标题+链接 stub，body 里自己写着 “Use `/panel.json` as the ESP32 panel URL”，而 `/panel` 与 `/panel.json` 是同一个 handler（`application/json`，esp32-screen `app.py:1410-1412`）。WebView 里显示的就是这段 JSON 文本，属排障视图；给人看的「面板数据预览」卡片在 `sources` Tab。
 - **来源与配额**：9 个信息来源的状态/TTL 健康、采集器状态、两个常驻服务（原生 dotnet Surface）。
 
 接口冻结见 [CONTRACT.md](CONTRACT.md)。字段名/契约改动必须先改 CONTRACT.md。
@@ -104,13 +104,15 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 `runtime.endpoint` 是 HTTP 且命令带 `path` 时由 Shell 直接发 HTTP、其余交给 Runner 模块运行时（本工具没有）。
 所以 tool.json 只声明两条能走 HTTP 的命令：
 
-| 命令 | tool.json（Shell/WebBridge 路径） | commands.index.json（命令面板路径） |
+| 命令 | tool.json（Shell / web route 路径） | commands.index.json（命令面板路径） |
 |---|---|---|
 | `xbrd.health` | `GET ${settings.publisherUrl}/health` | `http.request` → module http entrypoint `/health` |
 | `xbrd.sources.reload` | `GET ${settings.publisherUrl}/api/v1/sources` | `http.request` → module http entrypoint `/api/v1/sources` |
 
-- **面板 Tab（WebBridge）**：内嵌页面可以调 `command.invoke`、`settings.get/set`、`secrets.get/set`、
-  `navigation.openExternal`；面板页的 origin 必须在 `ui/tool.json` 的 `allowedOrigins` 里。
+- **web route 的 WebBridge**：宿主支持 `command.invoke` / `settings.get` / `secrets.get` /
+  `navigation.openExternal`（实现见 `ShellWorkspaceController.ExternalWebBridge.cs`），页面 origin 必须在
+  `ui/tool.json` 的 `allowedOrigins` 里。但**本工具的面板 Tab 加载的是路由器返回的原始 JSON，页面里没有
+  任何脚本**，所以实际不会调用 WebBridge；两条命令的日常入口是命令面板（下表第二列）。
 - **命令面板**：走 `commands.index.json` 的 `http.request`，由模块 http entrypoint 执行。
 - 命令 id 不得以 `.refresh` / `.open-external` 结尾（web route 会过滤，
   `ExternalTools.cs`）。`remote-http` 传输本身不会被 Shell 的 palette 路径识别为 HTTP，

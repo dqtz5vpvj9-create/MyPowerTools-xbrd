@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="using:MyPowerTools.UI.Controls"
+             xmlns:services="using:Xbrd.Surface.Services"
              xmlns:vm="using:Xbrd.Surface.ViewModels"
              x:Class="Xbrd.Surface.Views.XbrdSourcesView"
              x:DataType="vm:XbrdSourcesViewModel">
@@ -87,6 +88,152 @@
           </StackPanel>
         </Border>
       </Grid>
+
+      <!-- ── 面板数据预览（路由器没有 HTML 管理页：/panel 与 /panel.json 是同一份 JSON） ── -->
+      <Border Classes="MptCard">
+        <StackPanel Spacing="{DynamicResource MptSpacingM}">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource MptSpacingM}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}" VerticalAlignment="Center">
+              <TextBlock Classes="MptSectionTitle" Text="面板数据预览" Margin="{DynamicResource MptNoThickness}" />
+              <TextBlock Classes="MptMeta"
+                         TextWrapping="Wrap"
+                         Text="路由器没有 HTML 管理页：/panel 与 /panel.json 返回同一份 JSON。本卡片直接渲染 panel.json，只读，字段按实际结构动态遍历。" />
+              <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding PanelPreviewMetaText}" />
+            </StackPanel>
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        Spacing="{DynamicResource MptSpacingS}"
+                        VerticalAlignment="Center">
+              <Border Classes="MptStatusBadge"
+                      Classes.running="{Binding PanelPreviewIsReady}"
+                      Classes.degraded="{Binding PanelPreviewIsDegraded}"
+                      Classes.error="{Binding PanelPreviewIsError}">
+                <TextBlock Classes="MptMeta" Text="{Binding PanelPreviewLabel}" />
+              </Border>
+              <TextBlock Classes="MptMeta"
+                         VerticalAlignment="Center"
+                         Text="{Binding PanelPreviewUpdatedText, StringFormat='updated {0}'}" />
+            </StackPanel>
+          </Grid>
+
+          <Border Classes="MptInset" IsVisible="{Binding HasPanelPreviewError}">
+            <StackPanel Spacing="{DynamicResource MptSpacing2Xs}">
+              <TextBlock FontWeight="SemiBold" Text="面板数据不可用（已降级，不影响下方区域）" />
+              <TextBlock Classes="MptMeta" TextWrapping="Wrap" Text="{Binding PanelPreviewErrorText}" />
+            </StackPanel>
+          </Border>
+
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="面板状态（status）" />
+            <ItemsControl ItemsSource="{Binding PanelStatusFields}" IsVisible="{Binding HasPanelStatus}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="services:XbrdPanelField">
+                  <Border Classes="MptStatusBadge"
+                          Classes.running="{Binding IsReady}"
+                          Classes.degraded="{Binding IsDegraded}"
+                          Classes.error="{Binding IsError}"
+                          Margin="{DynamicResource MptWrapItemCompactMargin}">
+                    <TextBlock Classes="MptMeta" Text="{Binding Display}" />
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Classes="MptMeta" IsVisible="{Binding !HasPanelStatus}" Text="面板数据未包含 status 字段。" />
+          </StackPanel>
+
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="天气（weather）" />
+            <ItemsControl ItemsSource="{Binding PanelWeatherFields}" IsVisible="{Binding HasPanelWeather}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="services:XbrdPanelField">
+                  <Border Classes="MptInset" Margin="{DynamicResource MptWrapItemCompactMargin}">
+                    <TextBlock Classes="MptMeta" Text="{Binding Display}" />
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Classes="MptMeta" IsVisible="{Binding !HasPanelWeather}" Text="面板数据未包含 weather 字段。" />
+          </StackPanel>
+
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="计划（plan）" />
+            <ItemsControl ItemsSource="{Binding PanelPlanFields}" IsVisible="{Binding HasPanelPlan}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="services:XbrdPanelField">
+                  <Grid ColumnDefinitions="Auto,*"
+                        ColumnSpacing="{DynamicResource MptSpacingM}"
+                        Margin="{DynamicResource MptGapBottomXs}">
+                    <TextBlock Classes="MptMeta" Text="{Binding Label}" />
+                    <TextBlock Grid.Column="1" TextWrapping="Wrap" Text="{Binding Value}" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Classes="MptMeta" IsVisible="{Binding !HasPanelPlan}" Text="面板数据未包含 plan 字段。" />
+            <TextBlock Classes="MptMeta"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding HasPanelPlanTodos}"
+                       Text="{Binding PanelPlanTodosText}" />
+          </StackPanel>
+
+          <StackPanel Spacing="{DynamicResource MptSpacingXs}">
+            <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="配额（quota）" />
+            <Border Background="{DynamicResource MptBrushSurfaceMuted}"
+                    Padding="{DynamicResource MptListItemPadding}"
+                    IsVisible="{Binding HasPanelQuota}">
+              <Grid ColumnDefinitions="0.85*,0.75*,0.7*,0.6*,2.1*" ColumnSpacing="{DynamicResource MptSpacingS}">
+                <TextBlock Classes="MptMeta" FontWeight="SemiBold" Text="LABEL" />
+                <TextBlock Grid.Column="1" Classes="MptMeta" FontWeight="SemiBold" Text="LEFT" />
+                <TextBlock Grid.Column="2" Classes="MptMeta" FontWeight="SemiBold" Text="AUX" />
+                <TextBlock Grid.Column="3" Classes="MptMeta" FontWeight="SemiBold" Text="STATUS" />
+                <TextBlock Grid.Column="4" Classes="MptMeta" FontWeight="SemiBold" Text="其它字段（动态）" />
+              </Grid>
+            </Border>
+            <ItemsControl ItemsSource="{Binding PanelQuotaRows}" IsVisible="{Binding HasPanelQuota}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="services:XbrdPanelQuotaRow">
+                  <Border BorderBrush="{DynamicResource MptBrushDivider}"
+                          BorderThickness="0,0,0,1"
+                          Padding="{DynamicResource MptListItemPadding}">
+                    <Grid ColumnDefinitions="0.85*,0.75*,0.7*,0.6*,2.1*" ColumnSpacing="{DynamicResource MptSpacingS}">
+                      <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Label}" />
+                        <TextBlock Classes="MptMeta" Text="{Binding KeyText}" />
+                      </StackPanel>
+                      <TextBlock Grid.Column="1" Classes="MptMono" VerticalAlignment="Center" Text="{Binding Left}" />
+                      <TextBlock Grid.Column="2" Classes="MptMeta" VerticalAlignment="Center" Text="{Binding Aux}" />
+                      <Border Grid.Column="3"
+                              Classes="MptStatusBadge"
+                              Classes.running="{Binding IsReady}"
+                              Classes.degraded="{Binding IsDegraded}"
+                              Classes.error="{Binding IsError}"
+                              VerticalAlignment="Center">
+                        <TextBlock Classes="MptMeta" Text="{Binding Status}" />
+                      </Border>
+                      <TextBlock Grid.Column="4"
+                                 Classes="MptMeta"
+                                 VerticalAlignment="Center"
+                                 TextWrapping="Wrap"
+                                 Text="{Binding Detail}" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <TextBlock Classes="MptMeta" IsVisible="{Binding !HasPanelQuota}" Text="面板数据未包含 quota 字段。" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
 
       <!-- ── 来源清单 ───────────────────────────────────────────────────── -->
       <Border Classes="MptCard" Padding="{DynamicResource MptNoThickness}">
