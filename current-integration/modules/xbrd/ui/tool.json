@@ -18,10 +18,10 @@
       "icon": "route.overview",
       "surface": {
         "kind": "web",
-        "source": "http://ow.lixinrui000.cn:8080/panel",
+        "source": "${settings.panelUrl}",
         "openExternal": true,
         "allowedOrigins": [
-          "http://ow.lixinrui000.cn:8080"
+          "${settings.publisherUrl}"
         ]
       }
     },
@@ -49,8 +49,8 @@
     "timeoutMs": 8000
   },
   "settings": {
-    "schema": "settings.schema.json",
-    "values": "settings.json",
+    "schema": "../settings.schema.json",
+    "values": "../settings.json",
     "secrets": [
       "routerToken"
     ]
@@ -59,14 +59,14 @@
     {
       "id": "xbrd.health",
       "title": "检查面板与来源健康",
-      "description": "探测路由器发布器的 /health。",
+      "description": "GET {publisherUrl}/health：探测路由器发布器是否在线（只读，不改路由器）。",
       "method": "GET",
       "path": "/health"
     },
     {
       "id": "xbrd.sources.reload",
       "title": "重新读取来源清单",
-      "description": "读取 /api/v1/sources 并刷新来源表。",
+      "description": "GET {publisherUrl}/api/v1/sources：读取 9 个来源的状态与 TTL。",
       "method": "GET",
       "path": "/api/v1/sources"
     }

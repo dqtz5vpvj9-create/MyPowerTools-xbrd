@@ -22,8 +22,17 @@
 
 | routeId | title | surface.kind | 目标 |
 |---|---|---|---|
-| `panel` | 面板 | `web` | `http://ow.lixinrui000.cn:8080/panel`（`openExternal: true`，`allowedOrigins` 含该 origin） |
+| `panel` | 面板 | `web` | `${settings.panelUrl}`（默认 `http://ow.lixinrui000.cn:8080/panel`；`openExternal: true`，`allowedOrigins: ["${settings.publisherUrl}"]`） |
 | `sources` | 来源与配额 | `dotnet` | `surface/Xbrd.Surface.dll`，类型 `Xbrd.Surface.XbrdSurfaceFactory` |
+
+**2026-09 修正（A 包与集成）**：route 的 `source` 与 `allowedOrigins` 由字面量改成 `${settings.*}`
+token，默认值与原来完全一致。原因：`settings.panelUrl` / `settings.publisherUrl` 已冻结为设置 key，
+若 route 写死字面量，用户在设置里改地址对面板 Tab 无效（设置项变成死配置）。
+`ToolRegistry.ToDescriptor` 在加载时会用模块根的 `settings.json` 展开 token，展开失败会让整个模块
+加载失败，所以 `build.ps1` 现在校验「tool.json 里出现的每个 `${settings.x}` 都在值文件里有非空值」。
+
+注意 `module.json` 的 http entrypoint `baseUrl` 无法使用 token（模块清单没有设置展开机制），
+改发布器地址时必须同时改那里，见第 9 节。
 
 `surface/Xbrd.Surface.dll` 是相对 **tool.json 所在目录**（`ui/`）的路径：dev overlay 会把
 `*.Surface.csproj` 的产物复制到 `ui/surface/`（见 `update-windows-dev.ps1:662`）。
@@ -45,6 +54,18 @@
 Secret（只此一个，预留）：`routerToken`。当前路由器发布 API **无鉴权**，因此 v1 允许为空；
 非空时所有请求附带 `Authorization: Bearer <token>`。
 
+### 设置文件位置（2026-09 修正，A）
+
+| 文件 | 位置 | 作用 |
+|---|---|---|
+| `settings.json`（值） | 模块根 `current-integration/modules/xbrd/settings.json` | `${settings.*}` 展开来源；Shell 的 settings 读写路径 |
+| `settings.schema.json` | 模块根 | 设置 key/类型/默认值/`x-mpt-secret` |
+| `ui/settings.json` | `ui/` | **kind=`settings` 的 UI surface 声明**，不是值文件 |
+
+`ui/tool.json` 用 `../settings.json` / `../settings.schema.json` 引用（相对 tool.json 所在目录）。
+原因：`module.json` 的 `uiSurfaces` 里的每个路径都由 `schemas/ui-surface.schema.json` 严格校验，
+把设置值放在 `ui/settings.json` 会让 `mpt validate` 失败（t0 骨架即如此）。
+
 ## 4. Commands（id 冻结）与「命令在哪执行」
 
 **执行机制（已核实 `ExternalTools.cs:345-389`）**：外部 SDK 工具的命令只有三条路径——
@@ -63,6 +84,17 @@ Secret（只此一个，预留）：`routerToken`。当前路由器发布 API **
 | `xbrd.health` | 检查面板与来源健康 | `GET /health` | 路由器发布器健康 |
 | `xbrd.sources.reload` | 重新读取来源清单 | `GET /api/v1/sources` | 来源清单 |
 
+**2026-09 修正（A）：同一组 id 同时出现在两处，覆盖两条可达路径。**
+`runtime.transport = remote-http` 只会被 `CommandIndex.ToExternalToolCommand` 当作
+`tool.runtime`（它只把 `loopback-http` 识别为 HTTP），而本工具没有模块运行时，因此命令面板路径
+必须在 `commands.index.json` 里显式声明 `execution.type = "http.request"`：
+
+| 路径 | 来源 | 执行者 |
+|---|---|---|
+| 工具页 / 内嵌面板 WebBridge `command.invoke` | `ui/tool.json` 的 commands | Shell `InvokeExternalToolCommandAsync`：`runtime.endpoint + path` 直发 HTTP |
+| 命令面板 / `mpt run` | `commands.index.json` 的 commands | Runner `MptHostRuntime.HttpRequestCommandAsync`：模块 http entrypoint `baseUrl + path` |
+
+两处 id 相同：`CommandIndex.AddOrReplace` 让静态索引覆盖同 id 的外部工具命令，索引里不会出现重复。
 `commands.index.json` 另含两条 navigation 命令：`xbrd.open.panel` → route `panel`，
 `xbrd.open.sources` → route `sources`。
 
@@ -172,3 +204,37 @@ v1 用 `readiness: none`（先例：`ddns.service`）。升级到 `pipe`（`xbrd
 5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 由本工具更新，且**没有**双写
    （迁移期必须先停掉对应计划任务/常驻 worker，见 README）。
 6. 仓库内无明文密钥；`routerToken` 走 MPT Secret Store。
+7. （2026-09 追加，A）包必须通过官方校验，两条都退出码 0：
+
+```powershell
+artifacts\sdk\cli\MyPowerTools.Cli.exe validate tools\xbrd\artifacts\package --schemas schemas
+artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\package --schemas schemas
+# 期望：package: valid / contract: xbrd state=running commands=7 surfaces=4 dashboard=True settings=static-surface logs=ok
+```
+
+## 9. 已知约束与平台边界（2026-09，A 核实）
+
+1. **`module.json.entrypoints` 不能为空**（`module.schema.json` 要求 `minItems: 1`）。
+   xbrd 没有本机模块运行时，声明路由器发布器 HTTP facade：
+   `{ "kind": "http", "priority": 80, "baseUrl": "http://ow.lixinrui000.cn:8080", "health": { "path": "/health" } }`。
+   `runtimePolicy.preferred = "service"` 与 `TransportSelector.PolicyCategory`（http → service）一致。
+   Runner 的 `HealthMonitor` 会对 `baseUrl + /health` 做健康检查，因此工具卡状态反映发布器可达性。
+2. **`baseUrl` 是静态字面量**：模块清单没有 `${settings.*}` 展开机制。发布器地址变更时必须同时改
+   `module.json` 的 `baseUrl` 与 `settings.json` 的 `publisherUrl`，否则健康检查与面板指向不同地址。
+3. **命令 id 不得以 `.refresh` / `.open-external` 结尾**：web route 会过滤
+   （`ShellWorkspaceController.ExternalTools.cs:47-49`）。
+4. **`ui/settings.json` 是 UI surface，不是设置值**；值文件在模块根（第 3 节）。
+5. **首次引入 Service Unit 必须先让 unit 目录存在于安装布局**
+   `%LOCALAPPDATA%\Programs\MyPowerTools\service-units\<unitId>`，
+   否则 `update-windows-dev.ps1` 的 overlay 会抛
+   `Installed service unit is missing for overlay`。处理步骤见 README「首次引入新 Service Unit 的坑」。
+6. **完整发布还需要 MPT 主仓三处清单**（本次未改，属发布负责人范围，A 已报告）：
+   - `scripts/publish-windows.ps1` 的 `$packageByTool` 加 `'xbrd' = 'xbrd'`
+     （否则 `build-provenance.json` 不含本工具）；
+   - `scripts/materialize-tool-submodules.ps1` 的 `$toolIds` 加 `'xbrd'`；
+   - `scripts/verify-release-candidate.ps1` 的 `$expectedTools` 加 `'xbrd'`（并相应调整
+     `A5.3-loadable-surfaces` / `A5.7-local-runner-discovery` 的期望计数）。
+   不注册只影响完整发布/发布候选校验，不影响 `build-all-tools.ps1 -ToolId xbrd` 与 dev overlay。
+7. **本机动作不进 tool.json**：采集、打开验证窗口、立即发布、重启 unit、看日志需要本机进程/服务控制，
+   Surface 按钮实现（B）；所有进程启动必须 `UseShellExecute=false` + `CreateNoWindow=true`
+   或 `-NoNewWindow`（AGENTS.md）。

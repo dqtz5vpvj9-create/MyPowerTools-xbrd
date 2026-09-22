@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "XBRD 屏幕设置",
+  "description": "key 冻结见 CONTRACT.md 第 3 节。panelUrl / publisherUrl 被 ui/tool.json 的 route.surface.source、allowedOrigins 与 runtime.endpoint 以 ${settings.*} 直接引用，改这里即改面板目标。注意 module.json 的 http entrypoint baseUrl 是静态的，换发布器地址时要一起改。",
+  "type": "object",
+  "properties": {
+    "publisherUrl": {
+      "type": "string",
+      "title": "路由器发布器地址",
+      "description": "发布 API 与 /health 的根地址，不含结尾斜杠。",
+      "default": "http://ow.lixinrui000.cn:8080"
+    },
+    "panelUrl": {
+      "type": "string",
+      "title": "内嵌面板地址",
+      "description": "面板 Tab 内嵌的页面；其 origin 必须同时出现在 ui/tool.json 的 allowedOrigins 中。",
+      "default": "http://ow.lixinrui000.cn:8080/panel"
+    },
+    "xbrdRepoRoot": {
+      "type": "string",
+      "title": "esp32-screen checkout 根目录",
+      "description": "来源与配额 Tab 调用本机采集脚本的仓库根（scripts\\ 下）。",
+      "default": "C:\\Users\\lixinrui\\repo\\esp32-screen"
+    },
+    "connectionTimeoutMs": {
+      "type": "integer",
+      "title": "探测超时（毫秒）",
+      "minimum": 100,
+      "default": 5000
+    },
+    "autoRefresh": {
+      "type": "boolean",
+      "title": "自动刷新来源状态",
+      "default": true
+    },
+    "enableMemSource": {
+      "type": "boolean",
+      "title": "启用 xbrd.mem.service",
+      "description": "是否允许 MEM 来源服务运行（quota.mem）。",
+      "default": true
+    },
+    "memIntervalSeconds": {
+      "type": "integer",
+      "title": "MEM 发布间隔（秒）",
+      "minimum": 5,
+      "default": 300
+    },
+    "enableCodexSource": {
+      "type": "boolean",
+      "title": "启用 xbrd.codex-quota.service",
+      "description": "是否允许 Codex 配额服务运行（quota.codex）。迁移期必须先停掉 esp32-screen 侧的三套旧生产者。",
+      "default": true
+    },
+    "codexIntervalSeconds": {
+      "type": "integer",
+      "title": "Codex 发布间隔（秒）",
+      "minimum": 5,
+      "default": 300
+    },
+    "routerToken": {
+      "type": "string",
+      "title": "路由器 API Token（Secret）",
+      "description": "只存 MPT Secret Store；非空时所有请求附 Authorization: Bearer <token>。当前路由器发布 API 无鉴权，v1 允许为空。",
+      "x-mpt-secret": true
+    }
+  }
+}

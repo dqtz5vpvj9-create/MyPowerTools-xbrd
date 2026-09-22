@@ -24,6 +24,32 @@
         "toolId": "xbrd",
         "routeId": "sources"
       }
+    },
+    {
+      "id": "xbrd.health",
+      "title": "检查 XBRD 面板与来源健康",
+      "subtitle": "GET {publisherUrl}/health",
+      "kind": "action",
+      "category": "XBRD",
+      "timeoutMs": 8000,
+      "execution": {
+        "type": "http.request",
+        "method": "GET",
+        "path": "/health"
+      }
+    },
+    {
+      "id": "xbrd.sources.reload",
+      "title": "重新读取 XBRD 来源清单",
+      "subtitle": "GET {publisherUrl}/api/v1/sources",
+      "kind": "action",
+      "category": "XBRD",
+      "timeoutMs": 8000,
+      "execution": {
+        "type": "http.request",
+        "method": "GET",
+        "path": "/api/v1/sources"
+      }
     }
   ]
 }

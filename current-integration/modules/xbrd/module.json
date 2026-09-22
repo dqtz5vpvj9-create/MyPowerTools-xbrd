@@ -5,7 +5,16 @@
   "displayName": "XBRD 屏幕",
   "version": "0.1.0",
   "moduleSdk": "1.0",
-  "entrypoints": [],
+  "entrypoints": [
+    {
+      "kind": "http",
+      "priority": 80,
+      "baseUrl": "http://ow.lixinrui000.cn:8080",
+      "health": {
+        "path": "/health"
+      }
+    }
+  ],
   "capabilities": [
     "status",
     "commands",

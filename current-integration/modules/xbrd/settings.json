@@ -1,0 +1,11 @@
+{
+  "publisherUrl": "http://ow.lixinrui000.cn:8080",
+  "panelUrl": "http://ow.lixinrui000.cn:8080/panel",
+  "xbrdRepoRoot": "C:\\Users\\lixinrui\\repo\\esp32-screen",
+  "connectionTimeoutMs": 5000,
+  "autoRefresh": true,
+  "enableMemSource": true,
+  "memIntervalSeconds": 300,
+  "enableCodexSource": true,
+  "codexIntervalSeconds": 300
+}
