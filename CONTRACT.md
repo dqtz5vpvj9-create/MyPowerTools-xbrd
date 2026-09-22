@@ -309,7 +309,39 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 - `ttl_s` ∈ [5, 172800]；`status` ∈ `ok|degraded|error|stale`
 - 本工具负责的 source id：`quota.mem`（kind `quota`，panel key `mem`）、`quota.codex`（panel key `codex`）
 - **不触碰**他人的生产者：`quota.proxy` / `quota.mes`（UI Quota Worker）、`quota.glm` /
-  `quota.deepseek` / `quota.lab` / `weather.minhang`（路由器 cron）、`plan.smoke`（开发残留）
+  `quota.deepseek` / `quota.lab` / `weather.minhang`（路由器 cron）、`plan.smoke`（已注销）
+
+#### 写入方溯源（D 已实现并部署，2026-09-22）
+
+发布器落盘时记录 `producer:{ remote_addr, user_agent }`，`GET /api/v1/sources` 与
+`GET /api/v1/sources/<id>` 的 `status` / `snapshot` 都带该字段（**纯增量**，既有字段未动）。
+**排障首选手段**：出现「离栅发布 / 非本机写入 / age 莫名归零」时，先看
+`producer.remote_addr` 与 `producer.user_agent`，再断言是谁写的。
+
+各来源的**已知生产者清单**（2026-09-22 路由器容器访问日志实测）：
+
+| 来源 | 生产者 | 来源 IP / UA |
+|---|---|---|
+| `quota.mem` | `xbrd.mem.service`（**唯一生产者**） | 本机 `10.33.0.145` · `Go-http-client/1.1` |
+| `quota.codex` | `xbrd.codex-quota.service` **+ 已知第二生产者**（VMware 虚机 ubuntu，MAC `00:0c:29:c7:f0:91`） | 本机 `10.33.0.145` · `Go-http-client/1.1`；VM `10.33.0.171` |
+| `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | 路由器 cron | `192.168.29.79` |
+| `quota.proxy` / `quota.mes` | UI Quota Worker（本机；已改为每 4 小时调度） | `10.33.0.145` · `Python-urllib/3.12` |
+
+实测计数（同一 24h 窗口）：`quota.codex` 的写入 = 18 × `10.33.0.171` + 3 × `10.33.0.145`。
+
+**`quota.codex` 的离栅发布是已知现象、不是故障**：那台 VM 会继续直接向发布器投递
+`quota.codex`（**用户已明确决定保留**，处理与后续见第 8 节第 5 条、第 9 节第 15 条）。
+因此 **「单生产者」不再是 `quota.codex` 的验收判据**；`quota.mem` 仍要求单生产者。
+
+#### 两条跨生产者的快照约束（LAB 修复中发现）
+
+- **`error` 字段上限 127 字节**：超限时**整条快照被拒、不落盘**
+  （400 `error must be a short string`）。**按 UTF-8 字节计数**，中文提示必须按**字节**截断
+  （实测 E 的第一版 223 字节中文错误串被拒）。
+- **生产者侧 `status=error` 的快照 `panel_patch` 必须为空**：否则错误值会覆盖面板上的
+  **最后正常值**（`quota.lab` 与 TAG 均已按此修正）。
+- 参考实现（LAB 会话生命周期、该部署的退出端点是 `POST /api/user/auth/logout`、复用 + 单飞 + 退避）
+  见 `esp32-screen/docs`；本节只做指引，不复制实现。
 
 ### 6.2 控制面（D2 冻结接口，Surface 按此对接，不得改名）
 
@@ -377,7 +409,14 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 4. 系统 › 服务 页出现 `xbrd.mem.service` 与 `xbrd.codex-quota.service`（active）；
    `%LOCALAPPDATA%\MyPowerTools\state\<unitId>.heartbeat` 两份单行小文件存在并随 tick 前进。
 5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 的 `age_s` 由两个 unit 的 tick 驱动
-   （旧生产者已于 2026-09-22 17:2x 由 Lead 停用，见 README「迁移注意」；此后不应再有第三方写入）。
+   （旧生产者已于 2026-09-22 17:2x 由 Lead 停用，见 README「迁移注意」）。
+   **但 `quota.codex` 另有一个已知第二生产者（VM `10.33.0.171`，用户决定保留，见第 9 节第 15 条）**：
+   - 因此 **「单生产者」不是 `quota.codex` 的验收判据**——它的 `age_s`/`revision` 可能由那台 VM
+     的投递而前进，甚至出现「本机 unit 没发布但 age 归零」；
+   - **离栅发布 = 预期现象，不是故障、不算 FAIL**；排障/核对时用
+     `producer.remote_addr` / `producer.user_agent`（第 6.1 节「写入方溯源」）判定写入方；
+   - `quota.mem` 仍要求**单生产者**（唯一生产者是 `xbrd.mem.service`，IP `10.33.0.145`）；
+     若 `quota.mem` 出现其它 `producer.remote_addr`，按故障处理。
 6. 仓库内无明文密钥；`routerToken` 走 MPT Secret Store。
 7. （2026-09 追加，A）包必须通过官方校验，两条都退出码 0：
 
@@ -403,7 +442,7 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
    | 来源类别 | 动作 | 必须看到的证据 |
    |---|---|---|
-   | 本工具 unit（`quota.mem` / `quota.codex`） | 行内「立即发布」 | `POST 127.0.0.1:19225\|19226/publish-now` 返回 `{ok,revision,duration_ms}`；`GET /api/v1/sources/<id>` 的 `age_s` **立刻归零**、`revision` 变化；**unit PID 不变**（证明没重启）；并发第二次返回 `skipped:true` 或 409 |
+   | 本工具 unit（`quota.mem` / `quota.codex`） | 行内「立即发布」 | `POST 127.0.0.1:19225\|19226/publish-now` 返回 `{ok,revision,duration_ms}`；`GET /api/v1/sources/<id>` 的 `age_s` **立刻归零**、`revision` 变化；**unit PID 不变**（证明没重启）；并发第二次返回 `skipped:true` 或 409。**注意**：`quota.codex` 有已知第二生产者（§6.1），**不要**用「`revision` 只可能由本机 unit 改变」或「单生产者」当判据；用 `publish-now` 的返回体（它带本机 `revision`/`duration_ms`）+ PID 不变判定；`quota.mem` 不受影响，仍应单生产者 |
    | 路由器 cron（`quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang`） | 「立即刷新」 | `POST /api/v1/sources/<id>/refresh` 真跑插件：返回体含 `exit_code`/`stdout_tail`；`quota.glm` 当前是认证失败，**必须如实返回失败**；`disable` 后一次快照返回 `accepted:false`、不计入 unhealthy/expired、`effective_status:"disabled"` 且 **panel 保留 last-good**；`enable` 恢复 |
    | UI Quota（`quota.proxy` / `quota.mes`） | 「采集 / 打开验证窗口」 | 动作**在本机执行**（UI Quota Worker / `{xbrdRepoRoot}\scripts\` 脚本），不经路由器控制面；路由器侧 `capabilities` 为空 |
    | 无生产者残留（`plan.smoke`） | 行内「注销」 | `DELETE /api/v1/sources/<id>` 后该来源从 `/api/v1/sources` 与 `/panel.json` 消失，`/health` 的 `source_count`/`expired_count` 相应变化 |
@@ -584,3 +623,19 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
     `Brush`/`Color`、`FontWeight`、`GridLength`（`RowDefinitions`/`ColumnDefinitions`）等。
     （A 侧可选加固：`build.ps1` 里做一次 AXAML 静态扫描，把 `(Margin|Padding|BorderThickness)="{DynamicResource X}"`
     与 `MptSpacing*` 这类 Double token 交叉校验；本轮未做，记后续。）
+
+15. **已知第二生产者：`quota.codex`（2026-09-22 定案，用户决定保留）**。
+    V 的最终验收把两笔「离栅发布」判为 FAIL，D 用路由器容器访问日志定案：
+    ```
+    2026-09-22T12:36:37.597Z  10.33.0.171  POST /api/v1/sources/quota.codex/snapshot  200
+    2026-09-22T12:49:01.464Z  10.33.0.171  同上
+    2026-09-22T12:53:07.901Z  10.33.0.171  同上
+    写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:29:c7:f0:91）｜3 × 10.33.0.145（本机）
+    ```
+    **处置：保留，按「已知第二生产者」对待**（不判 FAIL、不改本工具、不停那台 VM）。
+    - 影响面：`quota.codex` 的 `age_s`/`revision` 可能由该 VM 驱动 → 第 8 节第 5/9 条已相应改写
+      （「单生产者」不再是 `quota.codex` 的判据；`quota.mem` 仍要求单生产者）。
+    - 排障：一律先看 `producer.remote_addr` / `producer.user_agent`（第 6.1 节），不要凭
+      「本机没发布却 age 归零」推断有 bug。
+    - **后续项（未做）**：若将来要收编那台 VM，应让它改指 MPT（由 MPT 触发/代理），或停掉它的
+      投递；**收编之后再把「单生产者」重新纳入 `quota.codex` 的验收**。

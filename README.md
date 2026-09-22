@@ -192,7 +192,8 @@ Unable to cast object of type 'System.Double' to type 'Avalonia.Thickness'.
   - 工具页 / WebBridge / `ui/tool.json` commands：**可用**；
   - `commands.index.json` 静态索引 + 包级 `validate contracts`：**可用**（`commands=7`）；
     在**含本包的 modules root**（开发版安装布局）下 `mpt run xbrd.health` 返回
-    `succeeded: HTTP 200 {...source_count:9...}`；但在仓库 `F:\repo\MyPowerTools\modules` 下会报
+    `succeeded: HTTP 200 {...source_count:9...}`（当时 `plan.smoke` 还在；它注销后为 `source_count:8`）；
+    但在仓库 `F:\repo\MyPowerTools\modules` 下会报
     `Command 'xbrd.health' was not found.`——那是该目录**没有 xbrd 包**（`build-all-tools.ps1 -ToolId xbrd`
     没跑过），不是命令实现有问题；
   - **Shell 命令面板里是否出现/可执行这两条命令 = UNCERTAIN（未实测）**；
@@ -264,6 +265,45 @@ Disable-ScheduledTask -TaskName 'XBRD Codex Quota Trigger' -TaskPath '\'
 - 此后 `quota.mem` / `quota.codex` 只由 `xbrd.mem.service` / `xbrd.codex-quota.service` 发布；
 - **回滚路径**：重新启用上述三个任务 + 从 `hooks.json.bak-xbrd-20260922` 恢复 hooks，然后停掉对应 unit。
 - `\XBRD\XBRD UI Quota Worker`（quota.proxy / quota.mes）**未动**，仍按原计划运行。
+
+### ★ `quota.codex` 有一个已知第二生产者（用户决定保留）
+
+V 的最终验收把两笔离栅发布判为 FAIL，D 用路由器容器访问日志定案（2026-09-22）：
+
+```
+2026-09-22T12:36:37.597Z  10.33.0.171  POST /api/v1/sources/quota.codex/snapshot  200
+2026-09-22T12:49:01.464Z  10.33.0.171  同上
+2026-09-22T12:53:07.901Z  10.33.0.171  同上
+quota.codex 写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:29:c7:f0:91）｜3 × 10.33.0.145（本机）
+```
+
+**结论：保留那台 VM，按「已知第二生产者」处理**（不判 FAIL、不改本工具、不停 VM）。因此：
+
+- **「单生产者」不是 `quota.codex` 的验收判据**；`quota.codex` 的 `age_s`/`revision` 可能由 VM 驱动，
+  「本机没发布但 age 归零」是**预期现象，不是故障**。
+- `quota.mem` 仍要求单生产者（唯一生产者 `xbrd.mem.service`，`10.33.0.145`）；
+  若它出现别的 `producer.remote_addr`，按故障处理。
+- 排障一律先看发布器新增的 **写入方溯源** `producer.remote_addr` / `producer.user_agent`
+  （`GET /api/v1/sources` 与 `/api/v1/sources/<id>` 都带，纯增量）；明细见 CONTRACT §6.1、§8.5/§8.9、§9.15。
+
+已知生产者清单：`quota.mem` = 本机 unit `10.33.0.145` + `Go-http-client/1.1`（唯一）；
+`quota.codex` = 本机 unit 同上 + VM `10.33.0.171`；路由器 cron 四源 = `192.168.29.79`；
+`quota.proxy`/`quota.mes` = 本机 UI Quota Worker `10.33.0.145` + `Python-urllib/3.12`。
+
+### 生产者侧两条硬约束（LAB 修复中发现）
+
+- 快照的 `error` 字段**上限 127 字节（UTF-8 字节计数）**，超限整条被拒（400
+  `error must be a short string`、不落盘）——中文提示要按**字节**截断（一版 223 字节的中文错误串被拒）。
+- `status=error` 的快照 **`panel_patch` 必须为空**，否则会覆盖面板上的最后正常值（`quota.lab`、TAG 已修）。
+- LAB 的实现参考（会话生命周期、退出端点 `POST /api/user/auth/logout`、复用 + 单飞 + 退避）在
+  `esp32-screen/docs`，此处只做指引。
+
+### 本轮其它已交付事实（2026-09-22）
+
+- `quota.mes` / `quota.proxy`（MES/TAG）已修：**TAG `left=411G` 解析修正**（旧实现把 total 当 left）、
+  错误分类不再把 `parse_rejected` 写成 CF、tag/mes 并行 + step-gui 布局指纹缓存
+  （**34s → 9.4–15.3s**）、调度由每日 03:30 改为**每 4 小时**；
+- 这两个源在路由器侧仍是**零能力**（动作在 MPT 本地：立即采集 / 打开验证窗口），与 CONTRACT §8.9 一致。
 
 ## git / 发布闭环
 
