@@ -45,25 +45,40 @@
 Secret（只此一个，预留）：`routerToken`。当前路由器发布 API **无鉴权**，因此 v1 允许为空；
 非空时所有请求附带 `Authorization: Bearer <token>`。
 
-## 4. Commands（id 冻结）
+## 4. Commands（id 冻结）与「命令在哪执行」
 
-**命名规则**：id 不得以 `.refresh` 或 `.open-external` 结尾——web route 会把这两个后缀的命令
-从页面命令栏过滤掉（`ExternalTools.cs:47-49`）。
+**执行机制（已核实 `ExternalTools.cs:345-389`）**：外部 SDK 工具的命令只有三条路径——
+`.open-external` 后缀 → 开浏览器；`runtime.endpoint` 是 HTTP(S) 且命令带 `path` → Shell 直接
+发 HTTP 到 `endpoint + path`；其余情况交给 Runner 的 `ExecuteRuntimeCommandAsync`，而本工具
+`runtime.transport` 不是模块运行时，**走不通**。
 
-| id | title | 归属 | 行为 |
+因此 v1 只声明两条命令，且必须能走 HTTP：
+
+```json
+"runtime": { "transport": "remote-http", "endpoint": "${settings.publisherUrl}", "timeoutMs": 8000 }
+```
+
+| id | title | 方法/路径 | 说明 |
 |---|---|---|---|
-| `xbrd.health` | 检查面板与来源健康 | A（HTTP） | GET `{publisherUrl}/health` |
-| `xbrd.sources.reload` | 重新读取来源清单 | A（HTTP） | GET `{publisherUrl}/api/v1/sources` |
-| `xbrd.quota.collect-now` | 立即采集 UI 配额 | A（进程） | 运行 `{xbrdRepoRoot}\scripts\xbrd-ui-quota-worker-status.ps1` 的采集入口（venv runner） |
-| `xbrd.quota.open-challenge` | 打开配额验证窗口 | A（进程） | `{xbrdRepoRoot}\scripts\xbrd-start-ui-quota-edge.ps1` |
-| `xbrd.mem.publish-now` | 立即发布内存来源 | A | POST 一次 `quota.mem` |
-| `xbrd.codex.publish-now` | 立即发布 Codex 配额 | A | POST 一次 `quota.codex` |
-| `xbrd.mem.restart` | 重启内存来源服务 | B（ServiceUnits） | `IServiceUnitClient.RestartAsync("xbrd.mem.service")` |
-| `xbrd.codex.restart` | 重启 Codex 配额服务 | B | `IServiceUnitClient.RestartAsync("xbrd.codex-quota.service")` |
-| `xbrd.logs.tail` | 查看日志 | A | 返回采集器日志路径列表 |
+| `xbrd.health` | 检查面板与来源健康 | `GET /health` | 路由器发布器健康 |
+| `xbrd.sources.reload` | 重新读取来源清单 | `GET /api/v1/sources` | 来源清单 |
 
 `commands.index.json` 另含两条 navigation 命令：`xbrd.open.panel` → route `panel`，
 `xbrd.open.sources` → route `sources`。
+
+**不放进 tool.json 的动作**（它们需要本机进程/服务控制，HTTP 路径表达不了）由 sources Tab 的
+Surface 按钮实现，归属 B：
+
+| 动作 | 实现 |
+|---|---|
+| 立即采集 UI 配额 | Surface 启动 `{xbrdRepoRoot}\scripts\` 下的采集入口（venv runner），显示进度与结果 |
+| 打开配额验证窗口 | Surface 启动 `{xbrdRepoRoot}\scripts\xbrd-start-ui-quota-edge.ps1` |
+| 立即发布 `quota.mem` / `quota.codex` | Surface 调用对应 Service Unit（或直接触发一次发布） |
+| 重启 `xbrd.mem.service` / `xbrd.codex-quota.service` | `IServiceUnitClient.RestartAsync(unitId)` |
+| 查看日志 | Surface 打开日志路径 / 跳转 Logs Viewer |
+
+所有本机进程启动必须 `UseShellExecute=false` 且 `CreateNoWindow=true`（或 `-NoNewWindow`），
+不得弹控制台窗口（AGENTS.md「构建与测试不得弹出命令行窗口」）。
 
 ## 5. Service Units（id 与 manifest 冻结）
 

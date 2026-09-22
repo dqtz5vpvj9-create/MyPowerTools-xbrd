@@ -44,7 +44,9 @@
     "order": 60
   },
   "runtime": {
-    "transport": "none"
+    "transport": "remote-http",
+    "endpoint": "${settings.publisherUrl}",
+    "timeoutMs": 8000
   },
   "settings": {
     "schema": "settings.schema.json",
@@ -67,75 +69,6 @@
       "description": "读取 /api/v1/sources 并刷新来源表。",
       "method": "GET",
       "path": "/api/v1/sources"
-    },
-    {
-      "id": "xbrd.quota.collect-now",
-      "title": "立即采集 UI 配额",
-      "description": "立即运行 UI Quota Worker（TAG/MESL），不等每日 03:30。",
-      "kind": "action",
-      "dangerLevel": "low",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.quota.open-challenge",
-      "title": "打开配额验证窗口",
-      "description": "打开专用 Edge CDP profile，人工完成 Cloudflare/GeeTest 验证。",
-      "kind": "action",
-      "dangerLevel": "low",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.mem.publish-now",
-      "title": "立即发布内存来源",
-      "description": "向路由器发布一次 quota.mem 快照。",
-      "kind": "action",
-      "dangerLevel": "low",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.codex.publish-now",
-      "title": "立即发布 Codex 配额",
-      "description": "向路由器发布一次 quota.codex 快照。",
-      "kind": "action",
-      "dangerLevel": "low",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.mem.restart",
-      "title": "重启内存来源服务",
-      "description": "重启 Service Unit xbrd.mem.service。",
-      "kind": "action",
-      "dangerLevel": "medium",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.codex.restart",
-      "title": "重启 Codex 配额服务",
-      "description": "重启 Service Unit xbrd.codex-quota.service。",
-      "kind": "action",
-      "dangerLevel": "medium",
-      "execution": {
-        "type": "module.execute"
-      }
-    },
-    {
-      "id": "xbrd.logs.tail",
-      "title": "查看 XBRD 采集日志",
-      "description": "列出采集器与服务的日志位置。",
-      "kind": "action",
-      "execution": {
-        "type": "module.execute"
-      }
     }
   ],
   "permissions": [],
