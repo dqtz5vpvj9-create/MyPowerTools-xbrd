@@ -316,6 +316,29 @@ quota.codex 写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:
 为什么每日一次够用：`quota.proxy` / `quota.mes` 的 `ttl_s=172800`（**48h**），单次成功即可覆盖整个周期；
 失败时任务自身重试 **3 次 × 15min**；MPT 侧还有 sources Tab 的「立即采集 / 打开验证窗口」可手动补。
 
+#### 手机端取数：候选地址链（2026-09-22 定稿）
+
+用户要求手机 App 改读 `http://ow.tail.lixinrui000.cn/` 以便外网（Tailscale）可用，但 11 台测试手机
+**都没装 Tailscale**，tailnet `100.64.0.0/10` 对纯 LAN 客户端不可达——**单纯换默认地址会让家里没装
+Tailscale 的手机也读不到**。故改为候选链（D 已实现并真机验证）：
+
+- **Android app + 桌面小组件**：`http://ow.tail.lixinrui000.cn/panel.json`（tailnet）→
+  `http://ow.lixinrui000.cn:8080/panel.json`（LAN），逐个尝试、**首个成功者生效**；
+  **last-known-good** 存在共用 SharedPreferences（`xbrd_quota_widget` / `panel_source_url`），
+  下次优先试它（实测 warm **2.7s** vs cold **9.2s**，省掉每次的 6s 超时）。
+- **可诊断**：显示来源标签 `via tailnet` / `via lan`；全失败时错误逐条汇总
+  （`fetch failed: tailnet=…; lan=…`）。
+- **Web 平台优先级不变**（task-6 冻结，本轮未改，**有意保持单地址**）；
+  `DEFAULT_PANEL_URL` 现指 tailnet。
+- **Android 明文白名单**：`base-config` 仍 `cleartextTrafficPermitted="false"`，白名单同时含
+  `ow.tail.lixinrui000.cn` 与 `ow.lixinrui000.cn`；**新增域名必须同步加白名单**，否则报
+  `CLEARTEXT communication ... not permitted`。
+- 版本：`apps/quota-universal` **1.0.5 / versionCode 6**；
+  `scripts/xbrd-build-install-quota-app.ps1` 已修两处（USB 序列号不再误走 `adb connect`；
+  非 root 时 `verify expired cache state` 标 SKIPPED）。
+- **未验证项**：没有装 Tailscale 的设备，**`via tailnet` 路径未真机实测**（只证明 tailnet 端点从
+  可达网络 200、APK 内地址常量与明文白名单正确）。拿到设备后需补验。详见 CONTRACT §6.3。
+
 ## git / 发布闭环
 
 - 本仓（submodule）remote 为 GitHub `MyPowerTools-xbrd`；改完提交并推送，再在 MPT 主仓更新

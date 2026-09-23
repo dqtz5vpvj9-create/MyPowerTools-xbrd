@@ -383,9 +383,38 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 - **兼容性**：不得改变现有路由、`xbrd.panel.v1` 契约、`/panel.json` 内容格式、
   `/api/v1/sources` 既有字段；**只做增量**。
 
-**落地状态（2026-09-22 第一段实测）**：D2 尚未部署——`GET /api/v1/sources` 还没有
-`enabled`/`capabilities`（9 个来源的字段仍是旧的），`GET /api/v1/sources/quota.glm/log?lines=3`
-返回 **404**。本节是冻结目标；命中验收放集成段（第 8 节）。
+**落地状态（2026-09-22 晚更新）**：D2 **已部署并真机验证**——`GET /api/v1/sources` 每条来源都有
+`enabled` + `capabilities`（路由器 cron 四源 = `refresh,disable,log`；`quota.codex/mem/mes/proxy` = 空），
+`GET /api/v1/sources/<id>/log?lines=N` 返回 200 + 真实 cron 行；`disable` 后投递的快照
+`accepted:false`、不计入统计、panel 保留 last-good；`plan.smoke` 已用 `delete` 注销（现存 8 个来源）。
+验收口径与实测证据见第 8 节第 9 条。
+
+### 6.3 手机端取数：候选地址链（2026-09-22 定稿，D 实现并真机验证）
+
+背景：用户要求手机 App 改读 `http://ow.tail.lixinrui000.cn/` 以便外网（Tailscale）可用；
+但 11 台测试手机**都没装 Tailscale**，tailnet `100.64.0.0/10` 对纯 LAN 客户端不可达，
+**单纯换默认地址会让「家里没装 Tailscale 的手机也读不到」**。因此改为**候选地址链**。
+
+1. **原生平台（Android app + 桌面小组件）候选链**：
+   `http://ow.tail.lixinrui000.cn/panel.json`（tailnet）→ `http://ow.lixinrui000.cn:8080/panel.json`（LAN），
+   **逐个尝试、首个成功者生效**。**last-known-good 持久化**：app 与小组件共用同一份
+   SharedPreferences（`xbrd_quota_widget` / `panel_source_url`），下次**优先试它**
+   （实测 warm **2.7s** vs cold **9.2s**——避免每次白付一次 6s 超时）。
+2. **可诊断**：App 与小组件都显示来源标签 **`via tailnet` / `via lan`**；全部失败时错误文案
+   **逐条汇总两个候选**：`fetch failed: tailnet=…; lan=…`。
+3. **Web 平台优先级不变**（task-6 冻结，本轮**未改动**，**有意保持单地址**）：
+   `?panel=` → `window.__XBRD_PANEL_URL__` → 同源相对 `panel.json` → `DEFAULT_PANEL_URL`；
+   `DEFAULT_PANEL_URL` 现指 tailnet。
+4. **Android 明文策略**：`network_security_config.xml` 的 `base-config` 仍是
+   `cleartextTrafficPermitted="false"`，白名单**同时**包含 `ow.tail.lixinrui000.cn` 与
+   `ow.lixinrui000.cn`（两条各有用途注释）。**新增域名必须同步加白名单**，否则报
+   `CLEARTEXT communication ... not permitted`。
+5. **版本与脚本**：`apps/quota-universal` 现为 **1.0.5 / versionCode 6**；
+   `scripts/xbrd-build-install-quota-app.ps1` 的两个既有问题已修：USB 序列号不再误走 `adb connect`；
+   非 root 时 `verify expired cache state` 标 **SKIPPED**（而不是误报失败）。
+6. **未验证项（如实记录）**：当前**没有装 Tailscale 的设备**，`via tailnet` 路径**未在真机实测**——
+   已证明的只有「tailnet 端点从可达网络返回 200」+「APK 内地址常量与明文白名单正确」。
+   拿到装 Tailscale 的手机后需补一次真机验证。
 
 ## 7. 写作者所有权（不重叠）
 
