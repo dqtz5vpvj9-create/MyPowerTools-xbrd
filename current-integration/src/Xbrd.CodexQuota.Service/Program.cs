@@ -94,7 +94,8 @@ internal static class Program
         string Revision,
         string SourceTag,
         string FreshnessLabel,
-        Dictionary<string, string?> Fields);
+        Dictionary<string, string?> Fields,
+        CodexQuotaSnapshot? Quota);
 
     /// <summary>Result of the v1 session-activity freshness proxy.</summary>
     private sealed record SessionFreshness(bool Applicable, bool Known, bool Stale, DateTimeOffset? NewestUtc)
@@ -114,6 +115,7 @@ internal static class Program
         var intervalSeconds = Math.Max(5, ReadPositiveInt("XBRD_CODEX_INTERVAL_SECONDS", DefaultIntervalSeconds));
         var dataRoot = ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
+        var resetMail = new QuotaResetMail(dataRoot);
         var heartbeatFile = Path.Combine(dataRoot, UnitId + ".heartbeat");
         var platformHeartbeatFile = ResolvePlatformHeartbeatPath(args);
 
@@ -229,6 +231,19 @@ internal static class Program
                 sourceTag = build.SourceTag;
                 freshnessLabel = build.FreshnessLabel;
                 fields = build.Fields;
+
+                // Only live RPC readings can advance the notification baseline.
+                if (status == "ok" && build.Quota?.Source == "app-server")
+                {
+                    try
+                    {
+                        await resetMail.ObserveAsync(build.Quota, DateTimeOffset.UtcNow, cts.Token);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Console.WriteLine($"[{UnitId}] reset email failed: {ex.GetType().Name}");
+                    }
+                }
 
                 try
                 {
@@ -558,7 +573,8 @@ internal static class Program
             Revision: payload["revision"]!.GetValue<string>(),
             SourceTag: sourceTag,
             FreshnessLabel: freshness.Label,
-            Fields: fields);
+            Fields: fields,
+            Quota: read);
     }
 
     private static Dictionary<string, string?> EmptyQuotaFields()
