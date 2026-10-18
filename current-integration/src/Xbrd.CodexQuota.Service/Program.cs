@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Xbrd.ServiceCommon;
+using static Xbrd.ServiceCommon.XbrdServiceLog;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
@@ -106,13 +108,24 @@ internal static class Program
         public string Label => !Applicable ? "n/a-live-rpc" : !Known ? "unknown" : Stale ? "stale" : "fresh";
     }
 
-    private static async Task<int> Main(string[] args)
+    private static Task<int> Main(string[] args) => RunAsync(args);
+
+    internal static async Task<int> RunAsync(
+        string[] args,
+        HttpMessageHandler? httpHandler = null,
+        Func<CancellationToken, Task<CodexQuotaSnapshot?>>? readQuota = null,
+        CancellationToken cancellationToken = default)
     {
         var dryRun = args.Any(static a => string.Equals(a, "--dry-run", StringComparison.OrdinalIgnoreCase));
         var once = dryRun || args.Any(static a => string.Equals(a, "--once", StringComparison.OrdinalIgnoreCase));
 
-        var publisher = (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? DefaultPublisher).Trim().TrimEnd('/');
-        var intervalSeconds = Math.Max(5, ReadPositiveInt("XBRD_CODEX_INTERVAL_SECONDS", DefaultIntervalSeconds));
+        var settingsReader = new XbrdServiceSettingsReader("codex", new XbrdServiceSettings(
+            (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? DefaultPublisher).Trim().TrimEnd('/'),
+            ReadEnabledFlag("XBRD_CODEX_ENABLED", "XBRD_ENABLE_CODEX_SOURCE") ?? true,
+            Math.Max(5, ReadPositiveInt("XBRD_CODEX_INTERVAL_SECONDS", DefaultIntervalSeconds))));
+        var settings = settingsReader.Read();
+        var publisher = settings.Publisher;
+        var intervalSeconds = settings.IntervalSeconds;
         var dataRoot = ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
         var resetMail = new QuotaResetMail(dataRoot);
@@ -121,26 +134,17 @@ internal static class Program
 
         if (dryRun)
         {
-            var build = await ReadSnapshotAsync(CancellationToken.None).ConfigureAwait(false);
+            var build = await ReadSnapshotAsync(CancellationToken.None, readQuota).ConfigureAwait(false);
             Console.WriteLine(build.Payload.ToJsonString(PayloadJsonOptions));
             return 0;
         }
 
-        // The enableCodexSource setting is not plumbed into the service-unit environment by v1 of
-        // the contract, so absence must keep the unit resident (never exit silently).
-        var enabled = ReadEnabledFlag("XBRD_CODEX_ENABLED", "XBRD_ENABLE_CODEX_SOURCE");
-        if (enabled is null)
+        if (!settings.Enabled)
         {
-            Console.WriteLine(AsciiSafe(
-                $"[{UnitId}] settings flag enableCodexSource is absent from the unit environment; defaulting to enabled and staying resident"));
-        }
-        else if (!enabled.Value)
-        {
-            Console.WriteLine(AsciiSafe(
-                $"[{UnitId}] settings flag enableCodexSource=false; staying resident without publishing"));
+            Console.WriteLine(AsciiSafe($"[{UnitId}] source is disabled; staying resident without collecting or publishing"));
         }
 
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
@@ -160,8 +164,7 @@ internal static class Program
         Console.WriteLine(AsciiSafe(
             $"[{UnitId}] started pid={Environment.ProcessId} publisher={publisher} interval={intervalSeconds}s dataRoot={dataRoot} ttl={TtlSeconds}s"));
 
-        using var http = CreateHttpClient();
-        var interval = TimeSpan.FromSeconds(intervalSeconds);
+        using var http = CreateHttpClient(httpHandler);
         var tick = 0L;
         var consecutiveFailures = 0;
         var lastGoodRevision = "";
@@ -184,6 +187,10 @@ internal static class Program
 
         while (!cts.IsCancellationRequested)
         {
+            settings = settingsReader.Read();
+            publisher = settings.Publisher;
+            intervalSeconds = settings.IntervalSeconds;
+            var interval = TimeSpan.FromSeconds(intervalSeconds);
             tick++;
             var stopwatch = Stopwatch.StartNew();
             string status;
@@ -200,7 +207,7 @@ internal static class Program
             control?.BeginPublish();
             try
             {
-            if (enabled == false)
+            if (!settings.Enabled)
             {
                 status = "disabled";
             }
@@ -213,7 +220,7 @@ internal static class Program
                 SnapshotBuild build;
                 try
                 {
-                    build = await ReadSnapshotAsync(cts.Token).ConfigureAwait(false);
+                    build = await ReadSnapshotAsync(cts.Token, readQuota).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
@@ -379,14 +386,18 @@ internal static class Program
         return once && failedTicks > 0 ? 1 : 0;
     }
 
-    private static async Task<SnapshotBuild> ReadSnapshotAsync(CancellationToken cancellationToken)
+    private static async Task<SnapshotBuild> ReadSnapshotAsync(
+        CancellationToken cancellationToken,
+        Func<CancellationToken, Task<CodexQuotaSnapshot?>>? readQuota = null)
     {
         var observedAt = DateTimeOffset.UtcNow;
         CodexQuotaSnapshot? read = null;
         string? readError = null;
         try
         {
-            read = await CodexQuotaReader.ReadAsync(cancellationToken).ConfigureAwait(false);
+            read = readQuota is null
+                ? await CodexQuotaReader.ReadAsync(cancellationToken).ConfigureAwait(false)
+                : await readQuota(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -478,7 +489,7 @@ internal static class Program
         if (read is null)
         {
             status = "degraded";
-            error = Truncate(readError ?? "Codex quota read failed.", 200);
+            error = readError ?? "Codex quota read failed.";
             fields = EmptyQuotaFields();
         }
         else
@@ -551,6 +562,7 @@ internal static class Program
             panelPatch["quota"] = new JsonObject { [PanelKey] = panel };
         }
 
+        error = TruncateUtf8(error, 127);
         var payload = new JsonObject
         {
             ["schema"] = "xbrd.source.snapshot.v1",
@@ -763,9 +775,10 @@ internal static class Program
         return revision.Length <= RevisionMaxLength ? revision : revision[..RevisionMaxLength];
     }
 
-    private static HttpClient CreateHttpClient()
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler = null)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(PublishTimeoutSeconds) };
+        var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        client.Timeout = TimeSpan.FromSeconds(PublishTimeoutSeconds);
         // CONTRACT.md section 3 reserves `routerToken`; the v1 router publish API is
         // unauthenticated so this stays inert today. It is never logged.
         var token = Environment.GetEnvironmentVariable("XBRD_ROUTER_TOKEN");
@@ -890,12 +903,14 @@ internal static class Program
             return configured.Trim();
         }
 
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MyPowerTools",
-            "state",
-            "tools",
-            "xbrd");
+        var platformRoot = Environment.GetEnvironmentVariable("MPT_DATA_ROOT");
+        if (string.IsNullOrWhiteSpace(platformRoot))
+        {
+            platformRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MyPowerTools");
+        }
+
+        return Path.Combine(platformRoot.Trim(), "state", "tools", "xbrd");
     }
 
     /// <summary>Returns null when the flag is absent (keep running), otherwise its value.</summary>
@@ -937,23 +952,23 @@ internal static class Program
             ? value
             : fallback;
 
+    internal static string TruncateUtf8(string text, int maxBytes)
+    {
+        var builder = new StringBuilder();
+        var bytes = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (bytes + rune.Utf8SequenceLength > maxBytes)
+            {
+                break;
+            }
+            builder.Append(rune.ToString());
+            bytes += rune.Utf8SequenceLength;
+        }
+        return builder.ToString();
+    }
+
     private static string Truncate(string text, int max)
         => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
 
-    /// <summary>Keeps stdout ASCII-only so redirected capture never suffers an encoding mismatch.</summary>
-    internal static string AsciiSafe(string text)
-    {
-        if (text.All(static ch => ch is >= ' ' and <= '~'))
-        {
-            return text;
-        }
-
-        var builder = new StringBuilder(text.Length);
-        foreach (var ch in text)
-        {
-            builder.Append(ch is >= ' ' and <= '~' ? ch : '?');
-        }
-
-        return builder.ToString();
-    }
 }

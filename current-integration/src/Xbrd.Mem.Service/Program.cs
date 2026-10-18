@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Xbrd.ServiceCommon;
+using static Xbrd.ServiceCommon.XbrdServiceLog;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
@@ -53,13 +55,24 @@ internal static class Program
     private static readonly Regex UnsafeRevisionChars = new("[^A-Za-z0-9_.-]+", RegexOptions.Compiled);
     private static readonly Encoding NoBomUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
-    private static async Task<int> Main(string[] args)
+    private static Task<int> Main(string[] args) => RunAsync(args);
+
+    internal static async Task<int> RunAsync(
+        string[] args,
+        HttpMessageHandler? httpHandler = null,
+        Func<JsonObject>? collectSnapshot = null,
+        CancellationToken cancellationToken = default)
     {
         var dryRun = args.Any(static a => string.Equals(a, "--dry-run", StringComparison.OrdinalIgnoreCase));
         var once = dryRun || args.Any(static a => string.Equals(a, "--once", StringComparison.OrdinalIgnoreCase));
 
-        var publisher = (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? DefaultPublisher).Trim().TrimEnd('/');
-        var intervalSeconds = Math.Max(5, ReadPositiveInt("XBRD_MEM_INTERVAL_SECONDS", DefaultIntervalSeconds));
+        var settingsReader = new XbrdServiceSettingsReader("mem", new XbrdServiceSettings(
+            (Environment.GetEnvironmentVariable("XBRD_PUBLISHER") ?? DefaultPublisher).Trim().TrimEnd('/'),
+            ReadEnabledFlag("XBRD_MEM_ENABLED", "XBRD_ENABLE_MEM_SOURCE") ?? true,
+            Math.Max(5, ReadPositiveInt("XBRD_MEM_INTERVAL_SECONDS", DefaultIntervalSeconds))));
+        var settings = settingsReader.Read();
+        var publisher = settings.Publisher;
+        var intervalSeconds = settings.IntervalSeconds;
         var dataRoot = ResolveDataRoot();
         Directory.CreateDirectory(dataRoot);
         var heartbeatFile = Path.Combine(dataRoot, UnitId + ".heartbeat");
@@ -68,25 +81,16 @@ internal static class Program
         if (dryRun)
         {
             // Diagnostic path: identical payload shape, no POST, no heartbeat.
-            Console.WriteLine(BuildSnapshot().ToJsonString());
+            Console.WriteLine((collectSnapshot?.Invoke() ?? BuildSnapshot()).ToJsonString());
             return 0;
         }
 
-        // The enableMemSource setting is not plumbed into the service-unit environment by
-        // v1 of the contract, so absence must keep the unit resident (never exit silently).
-        var enabled = ReadEnabledFlag("XBRD_MEM_ENABLED", "XBRD_ENABLE_MEM_SOURCE");
-        if (enabled is null)
+        if (!settings.Enabled)
         {
-            Console.WriteLine(AsciiSafe(
-                $"[{UnitId}] settings flag enableMemSource is absent from the unit environment; defaulting to enabled and staying resident"));
-        }
-        else if (!enabled.Value)
-        {
-            Console.WriteLine(AsciiSafe(
-                $"[{UnitId}] settings flag enableMemSource=false; staying resident without publishing"));
+            Console.WriteLine(AsciiSafe($"[{UnitId}] source is disabled; staying resident without collecting or publishing"));
         }
 
-        using var cts = new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
@@ -106,8 +110,7 @@ internal static class Program
         Console.WriteLine(AsciiSafe(
             $"[{UnitId}] started pid={Environment.ProcessId} publisher={publisher} interval={intervalSeconds}s dataRoot={dataRoot} ttl={TtlSeconds}s"));
 
-        using var http = CreateHttpClient();
-        var interval = TimeSpan.FromSeconds(intervalSeconds);
+        using var http = CreateHttpClient(httpHandler);
         var tick = 0L;
         var consecutiveFailures = 0;
         var lastGoodRevision = "";
@@ -130,6 +133,10 @@ internal static class Program
 
         while (!cts.IsCancellationRequested)
         {
+            settings = settingsReader.Read();
+            publisher = settings.Publisher;
+            intervalSeconds = settings.IntervalSeconds;
+            var interval = TimeSpan.FromSeconds(intervalSeconds);
             tick++;
             var observedAt = DateTimeOffset.UtcNow;
             var stopwatch = Stopwatch.StartNew();
@@ -144,7 +151,7 @@ internal static class Program
             control?.BeginPublish();
             try
             {
-                if (enabled == false)
+                if (!settings.Enabled)
                 {
                     status = "disabled";
                 }
@@ -152,7 +159,7 @@ internal static class Program
                 {
                     try
                     {
-                        var snapshot = BuildSnapshot();
+                        var snapshot = collectSnapshot?.Invoke() ?? BuildSnapshot();
                         revision = snapshot["revision"]!.GetValue<string>();
                         using var content = new StringContent(snapshot.ToJsonString(), Encoding.UTF8, "application/json");
                         using var response = await http
@@ -333,9 +340,10 @@ internal static class Program
         };
     }
 
-    private static HttpClient CreateHttpClient()
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler = null)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(PublishTimeoutSeconds) };
+        var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        client.Timeout = TimeSpan.FromSeconds(PublishTimeoutSeconds);
         // CONTRACT.md section 3 reserves `routerToken`; the v1 router publish API is
         // unauthenticated so this stays inert today. It is never logged.
         var token = Environment.GetEnvironmentVariable("XBRD_ROUTER_TOKEN");
@@ -467,12 +475,14 @@ internal static class Program
             return configured.Trim();
         }
 
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MyPowerTools",
-            "state",
-            "tools",
-            "xbrd");
+        var platformRoot = Environment.GetEnvironmentVariable("MPT_DATA_ROOT");
+        if (string.IsNullOrWhiteSpace(platformRoot))
+        {
+            platformRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MyPowerTools");
+        }
+
+        return Path.Combine(platformRoot.Trim(), "state", "tools", "xbrd");
     }
 
     /// <summary>Returns null when the flag is absent (keep running), otherwise its value.</summary>
@@ -518,23 +528,6 @@ internal static class Program
 
     private static string Truncate(string text, int max)
         => string.IsNullOrEmpty(text) || text.Length <= max ? text : text[..max];
-
-    /// <summary>Keeps stdout ASCII-only so redirected capture never suffers an encoding mismatch.</summary>
-    internal static string AsciiSafe(string text)
-    {
-        if (text.All(static ch => ch is >= ' ' and <= '~'))
-        {
-            return text;
-        }
-
-        var builder = new StringBuilder(text.Length);
-        foreach (var ch in text)
-        {
-            builder.Append(ch is >= ' ' and <= '~' ? ch : '?');
-        }
-
-        return builder.ToString();
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MEMORYSTATUSEX

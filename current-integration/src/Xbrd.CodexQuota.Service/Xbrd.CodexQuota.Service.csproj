@@ -21,4 +21,9 @@
          and trips the A1.7 dependency-boundary gate. -->
     <PackageReference Include="MyPowerTools.Platform.Abstractions" Version="0.2.0" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Xbrd.ServiceCommon/XbrdServiceSettings.cs" Link="XbrdServiceSettings.cs" />
+    <Compile Include="../Xbrd.ServiceCommon/ControlPlane.cs" Link="ControlPlane.cs" />
+    <Compile Include="../Xbrd.ServiceCommon/XbrdServiceLog.cs" Link="XbrdServiceLog.cs" />
+  </ItemGroup>
 </Project>

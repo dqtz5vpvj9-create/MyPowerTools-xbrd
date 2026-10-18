@@ -1249,7 +1249,7 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
         // Rebuilding the rows must not lose the evidence a control action just produced.
         var transient = Sources.ToDictionary(
             static row => row.SourceId,
-            static row => (row.OutcomeText, row.OutcomeIsError, row.LastLogText, row.IsDeleteConfirming),
+            static row => (row.OutcomeText, row.OutcomeIsError, row.LastLogText, row.IsDeleteConfirming, row.OutcomeIsPending),
             StringComparer.Ordinal);
 
         Sources.Clear();
@@ -1258,7 +1258,7 @@ public sealed class XbrdSourcesViewModel : MptObservableViewModel, IDisposable
             var row = new XbrdSourceRowViewModel(source, this);
             if (transient.TryGetValue(source.SourceId, out var previous))
             {
-                row.AdoptTransientState(previous.OutcomeText, previous.OutcomeIsError, previous.LastLogText, previous.IsDeleteConfirming);
+                row.AdoptTransientState(previous.OutcomeText, previous.OutcomeIsError, previous.LastLogText, previous.IsDeleteConfirming, previous.OutcomeIsPending);
             }
 
             Sources.Add(row);

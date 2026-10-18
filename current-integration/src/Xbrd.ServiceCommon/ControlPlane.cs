@@ -5,7 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
-namespace Xbrd.Mem.Service;
+namespace Xbrd.ServiceCommon;
 
 /// <summary>
 /// Result of one publish attempt. Shared by the periodic tick and the control endpoint so both
@@ -63,6 +63,10 @@ internal sealed class ControlPlane : IDisposable
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
+    // Task.Delay accepts at most UInt32.MaxValue - 1 milliseconds. Preserve longer
+    // configured publish intervals by waiting in large supported slices, not by clamping
+    // the setting or turning the normal HTTP-mode wait into frequent polling.
+    private static readonly TimeSpan MaximumDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1L);
     private static readonly TimeSpan TriggerPollInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
@@ -131,7 +135,7 @@ internal sealed class ControlPlane : IDisposable
             Mode = "http";
             _serverCts = new CancellationTokenSource();
             _serverTask = Task.Run(() => AcceptLoopAsync(listener, _serverCts.Token));
-            Console.WriteLine(Program.AsciiSafe(
+            Console.WriteLine(XbrdServiceLog.AsciiSafe(
                 $"[{_unitId}] control endpoint listening on http://127.0.0.1:{_port} (POST /publish-now, GET /state)"));
         }
         catch (Exception ex)
@@ -140,7 +144,7 @@ internal sealed class ControlPlane : IDisposable
             // interval publishing and additionally honours the trigger file.
             Mode = "trigger-file";
             _listener = null;
-            Console.Error.WriteLine(Program.AsciiSafe(
+            Console.Error.WriteLine(XbrdServiceLog.AsciiSafe(
                 $"[{_unitId}] control port {_port} unavailable ({ex.Message}); degraded to trigger file {_triggerFile}"));
         }
     }
@@ -199,10 +203,9 @@ internal sealed class ControlPlane : IDisposable
                 return;
             }
 
-            // HTTP mode blocks for the whole remaining interval (the wake signal interrupts it); the
-            // degraded mode polls the trigger file at a fixed cadence instead of waking per second
-            // when HTTP is available.
-            var slice = remaining;
+            // HTTP mode blocks for the remaining interval (or the largest supported timer slice),
+            // interrupted by the wake signal. Only degraded mode polls the trigger file each second.
+            var slice = remaining > MaximumDelay ? MaximumDelay : remaining;
             if (Mode != "http" && TriggerPollInterval < remaining)
             {
                 slice = TriggerPollInterval;
@@ -264,7 +267,7 @@ internal sealed class ControlPlane : IDisposable
 
         if (!string.IsNullOrWhiteSpace(raw))
         {
-            Console.Error.WriteLine(Program.AsciiSafe(
+            Console.Error.WriteLine(XbrdServiceLog.AsciiSafe(
                 $"[{_unitId}] XBRD_CONTROL_PORT='{raw}' is not a valid port; using {defaultPort}"));
         }
 
@@ -481,7 +484,7 @@ internal sealed class ControlPlane : IDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Console.Error.WriteLine(Program.AsciiSafe($"[{_unitId}] control request failed: {ex.Message}"));
+                Console.Error.WriteLine(XbrdServiceLog.AsciiSafe($"[{_unitId}] control request failed: {ex.Message}"));
             }
         }
     }
