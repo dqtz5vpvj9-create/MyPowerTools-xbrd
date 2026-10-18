@@ -17,6 +17,7 @@ public sealed class XbrdSourceRowViewModel : MptObservableViewModel
     private bool _isDeleteConfirming;
     private string _outcomeText = "";
     private bool _outcomeIsError;
+    private bool _outcomeIsPending;
     private string _lastLogText = "";
 
     public XbrdSourceRowViewModel(XbrdSourceSummary summary, XbrdSourcesViewModel owner)
@@ -191,9 +192,22 @@ public sealed class XbrdSourceRowViewModel : MptObservableViewModel
         }
     }
 
-    public bool OutcomeIsOk => !_outcomeIsError;
+    public bool OutcomeIsPending
+    {
+        get => _outcomeIsPending;
+        private set
+        {
+            if (SetProperty(ref _outcomeIsPending, value))
+            {
+                OnPropertyChanged(nameof(OutcomeIsOk));
+                OnPropertyChanged(nameof(OutcomeLabel));
+            }
+        }
+    }
 
-    public string OutcomeLabel => _outcomeIsError ? "动作失败" : "动作完成";
+    public bool OutcomeIsOk => !_outcomeIsError && !_outcomeIsPending;
+
+    public string OutcomeLabel => _outcomeIsError ? "动作失败" : _outcomeIsPending ? "已排队" : "动作完成";
 
     public string LastLogText
     {
@@ -215,23 +229,28 @@ public sealed class XbrdSourceRowViewModel : MptObservableViewModel
     internal void SetOutcome(XbrdControlResult result) =>
         SetOutcome($"{result.HeadlineText}\n{result.EvidenceText}", result.IsFailure);
 
-    internal void SetOutcome(XbrdPublishNowResult result) =>
-        SetOutcome($"立即发布：{(result.Ok ? "成功" : "失败")}\n{result.DetailText}", !result.Ok);
+    internal void SetOutcome(XbrdPublishNowResult result)
+    {
+        var pending = result.Ok && result.Skipped && result.Status != "disabled";
+        var label = !result.Ok ? "失败" : pending ? "已排队" : result.Status == "disabled" ? "已跳过" : "成功";
+        SetOutcome($"立即发布：{label}\n{result.Text}\n{result.DetailText}", !result.Ok, pending);
+    }
 
-    internal void SetOutcome(string text, bool isError)
+    internal void SetOutcome(string text, bool isError, bool pending = false)
     {
         OutcomeText = text.Trim();
         OutcomeIsError = isError;
+        OutcomeIsPending = pending;
     }
 
     internal void SetLog(string text) => LastLogText = text;
 
     /// <summary>Carry a previous row's evidence across a table rebuild (refresh replaces rows).</summary>
-    internal void AdoptTransientState(string outcomeText, bool outcomeIsError, string logText, bool deleteConfirming)
+    internal void AdoptTransientState(string outcomeText, bool outcomeIsError, string logText, bool deleteConfirming, bool pending = false)
     {
         if (outcomeText.Length > 0)
         {
-            SetOutcome(outcomeText, outcomeIsError);
+            SetOutcome(outcomeText, outcomeIsError, pending);
         }
 
         if (logText.Length > 0)

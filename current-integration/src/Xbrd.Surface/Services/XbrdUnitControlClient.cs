@@ -18,13 +18,24 @@ public sealed class XbrdUnitControlClient : IDisposable
     public const string CodexSourceId = "quota.codex";
 
     private readonly HttpClient _http;
+    private readonly string _dataRoot;
 
-    public XbrdUnitControlClient(TimeSpan timeout)
+    public XbrdUnitControlClient(TimeSpan timeout) : this(timeout, null, null) { }
+
+    internal XbrdUnitControlClient(TimeSpan timeout, HttpMessageHandler? handler, string? dataRoot)
     {
-        _http = new HttpClient
+        _http = handler is null ? new HttpClient() : new HttpClient(handler);
+        _http.Timeout = timeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(15) : timeout;
+        var configuredRoot = Environment.GetEnvironmentVariable("MPT_TOOL_DATA_ROOT");
+        var platformRoot = Environment.GetEnvironmentVariable("MPT_DATA_ROOT");
+        if (string.IsNullOrWhiteSpace(platformRoot))
         {
-            Timeout = timeout <= TimeSpan.Zero ? TimeSpan.FromSeconds(15) : timeout
-        };
+            platformRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MyPowerTools");
+        }
+        _dataRoot = dataRoot ?? (!string.IsNullOrWhiteSpace(configuredRoot)
+            ? configuredRoot.Trim()
+            : Path.Combine(platformRoot.Trim(), "state", "tools", "xbrd"));
     }
 
     /// <summary>
@@ -52,6 +63,15 @@ public sealed class XbrdUnitControlClient : IDisposable
         if (port is null)
         {
             return new XbrdPublishNowResult(false, sourceId, "", 0, "", $"{sourceId} 不由本工具的 Service Unit 生产。", "");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        // In degraded mode this port belongs to another process. Consult the unit's own
+        // diagnostic heartbeat first; do not POST to the process that won the port race.
+        var triggerResult = await TryQueueTriggerAsync(sourceId, cancellationToken).ConfigureAwait(false);
+        if (triggerResult is not null)
+        {
+            return triggerResult;
         }
 
         var endpoint = $"http://127.0.0.1:{port}/publish-now";
@@ -106,6 +126,10 @@ public sealed class XbrdUnitControlClient : IDisposable
                 endpoint,
                 XbrdJson.ReadBool(root, "skipped"));
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (TaskCanceledException)
         {
             return new XbrdPublishNowResult(false, sourceId, "", 0, "", $"unit 控制端点超时（{endpoint}）。", endpoint);
@@ -120,6 +144,72 @@ public sealed class XbrdUnitControlClient : IDisposable
                 "",
                 string.Create(CultureInfo.InvariantCulture, $"unit 控制端点不可达（{endpoint}）：{ex.Message}。需要该 unit 正在运行且已支持 /publish-now（task-8/C2）。"),
                 endpoint);
+        }
+    }
+
+    private async Task<XbrdPublishNowResult?> TryQueueTriggerAsync(string sourceId, CancellationToken cancellationToken)
+    {
+        var unit = sourceId == MemSourceId ? "xbrd.mem.service" : "xbrd.codex-quota.service";
+        var triggerName = sourceId == MemSourceId ? "xbrd.mem.trigger" : "xbrd.codex-quota.trigger";
+        var heartbeatPath = Path.Combine(_dataRoot, unit + ".heartbeat");
+        var triggerPath = Path.Combine(_dataRoot, triggerName);
+        try
+        {
+            if (!File.Exists(heartbeatPath) || new FileInfo(heartbeatPath).Length > 64 * 1024)
+            {
+                return null;
+            }
+            var text = await File.ReadAllTextAsync(heartbeatPath, cancellationToken).ConfigureAwait(false);
+            if (JsonNode.Parse(text) is not JsonObject heartbeat ||
+                XbrdJson.ReadString(heartbeat, "unit") != unit ||
+                XbrdJson.ReadString(heartbeat, "control") != "trigger-file")
+            {
+                return null;
+            }
+
+            var interval = XbrdJson.ReadLong(heartbeat, "intervalSeconds", 300);
+            // Manual triggering requires reasonably recent liveness even when a user chose a
+            // very long publish interval. Do not accept a corrupt 68-year freshness window.
+            var allowedAge = TimeSpan.FromSeconds(Math.Clamp(interval, 5, 86_400) + 30d);
+            if (!DateTimeOffset.TryParse(XbrdJson.ReadString(heartbeat, "observedAt"),
+                    CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var observed) ||
+                observed > DateTimeOffset.UtcNow.AddSeconds(30) || DateTimeOffset.UtcNow - observed > allowedAge)
+            {
+                return new XbrdPublishNowResult(false, sourceId, "", 0, "unreachable",
+                    "unit 的触发文件心跳已过期或无效，请先确认服务正在运行。", heartbeatPath);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var previous = File.GetLastWriteTimeUtc(triggerPath);
+            // Keep mtime increasing even for rapid repeated requests / coarse timestamp precision.
+            var modified = DateTime.UtcNow;
+            if (modified <= previous.AddSeconds(1))
+            {
+                modified = previous.AddSeconds(1);
+            }
+            using (var stream = new FileStream(triggerPath, FileMode.OpenOrCreate, FileAccess.Write,
+                       FileShare.Read, 4096, FileOptions.WriteThrough))
+            {
+                stream.SetLength(0);
+                var bytes = System.Text.Encoding.UTF8.GetBytes(modified.ToString("O", CultureInfo.InvariantCulture));
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+                File.SetLastWriteTimeUtc(stream.SafeFileHandle, modified);
+                stream.Flush(flushToDisk: true);
+            }
+
+            // A durable request is not proof of publication. The unit's next heartbeat reports
+            // the actual outcome (including disabled); never label this result as published.
+            return new XbrdPublishNowResult(true, sourceId, "", 0, "trigger-queued", "", triggerPath, true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            return new XbrdPublishNowResult(false, sourceId, "", 0, "unreachable",
+                $"无法读取 unit 心跳或写入触发文件：{ex.Message}", triggerPath);
         }
     }
 

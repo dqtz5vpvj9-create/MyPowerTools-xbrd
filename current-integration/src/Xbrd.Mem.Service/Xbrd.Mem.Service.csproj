@@ -14,4 +14,9 @@
       started a fresh wscript/powershell process on every tick.
     </Description>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Xbrd.ServiceCommon/XbrdServiceSettings.cs" Link="XbrdServiceSettings.cs" />
+    <Compile Include="../Xbrd.ServiceCommon/ControlPlane.cs" Link="ControlPlane.cs" />
+    <Compile Include="../Xbrd.ServiceCommon/XbrdServiceLog.cs" Link="XbrdServiceLog.cs" />
+  </ItemGroup>
 </Project>

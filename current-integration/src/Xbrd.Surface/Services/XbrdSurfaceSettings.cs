@@ -6,7 +6,7 @@ namespace Xbrd.Surface.Services;
 
 /// <summary>
 /// Effective tool settings for this Surface. Values come from the tool's own
-/// <c>ui/settings.json</c> (the same file the Shell uses to expand <c>${settings.*}</c> in
+/// <c>settings.json</c> at the module root (the same file the Shell uses to expand <c>${settings.*}</c> in
 /// <c>tool.json</c>), reached through the Runner's tool descriptor. When the host is unreachable the
 /// contract defaults from CONTRACT.md §3 are used and the Surface says so instead of failing.
 /// Secret values are never read, copied or logged.
@@ -59,7 +59,7 @@ public sealed record XbrdSurfaceSettings(
 
     public string OriginText => Origin switch
     {
-        "tool-settings" => "工具设置（ui/settings.json）",
+        "tool-settings" => "工具设置（settings.json）",
         "host-settings-store" => "宿主设置存储",
         _ => "契约默认值"
     };

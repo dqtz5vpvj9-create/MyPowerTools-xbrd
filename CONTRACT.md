@@ -1,5 +1,9 @@
 # XBRD 工具契约（冻结 v1）
 
+部署示例约定：`*.example.invalid`、`<MyPowerTools-checkout>`、`<esp32-screen-checkout>`
+与 `<...-address>` 均为文档占位符，使用前须替换为部署配置。占位符不代表运行时默认值；
+实际配置见随包设置、schema 与源代码。本次仅整理文档，未修改其中的现有默认配置。
+
 本文件是本工具三个并行写作者（A 包与集成 / B Surface / C Service Unit）之间的**唯一接口来源**。
 任何字段改名都必须先改本文件，再改代码。
 
@@ -27,7 +31,7 @@
 
 **面板 Tab 复用手机端配额 UI（2026-09-22 用户裁定；托管形态 (i) 路由器静态托管）。** 手机端
 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，本质相同就该复用；
-D 把它的 web 导出部署到路由器 `/panel-app/`（`GET http://ow.lixinrui000.cn:8080/panel-app/` → 200
+D 把它的 web 导出部署到路由器 `/panel-app/`（通过部署配置的发布器入口验证 `GET /panel-app/` → 200
 `text/html`，与 `/panel.json` 同源），MPT 侧**零新增服务**。此前结论「路由器没有 HTML 管理页、
 面板 Tab 只能看原始 JSON」**已作废**（`GET /` 的 499 字节 stub 只是默认页）。
 备选形态 (ii)「MPT 本地 `http://127.0.0.1:19224/` + `xbrd.panel.service`」的参数与完整改动清单保留在
@@ -62,11 +66,11 @@ D 把它的 web 导出部署到路由器 `/panel-app/`（`GET http://ow.lixinrui
 
 ## 3. Settings（key 冻结）
 
-| key | 类型 | 默认 | 说明 |
+| key | 类型 | 默认 / 部署项示例 | 说明 |
 |---|---|---|---|
-| `publisherUrl` | string | `http://ow.lixinrui000.cn:8080` | 路由器发布器 |
-| `panelUrl` | string | `http://ow.lixinrui000.cn:8080/panel.json` | 设备**原始** panel JSON 入口（Open externally / 原始数据 / Surface 诊断）；**不再是面板 Tab 的 source**（§9.11） |
-| `xbrdRepoRoot` | string | `C:\Users\lixinrui\repo\esp32-screen` | 采集脚本所在 checkout |
+| `publisherUrl` | string | 部署占位示例：`http://publisher.example.invalid:8080` | 路由器发布器 |
+| `panelUrl` | string | 部署占位示例：`http://publisher.example.invalid:8080/panel.json` | 设备**原始** panel JSON 入口（Open externally / 原始数据 / Surface 诊断）；**不再是面板 Tab 的 source**（§9.11） |
+| `xbrdRepoRoot` | string | 部署占位示例：`<esp32-screen-checkout>` | 采集脚本所在 checkout |
 | `connectionTimeoutMs` | integer | `5000` | 探测超时 |
 | `autoRefresh` | boolean | `true` | surface 自动刷新 |
 | `enableMemSource` | boolean | `true` | 是否启用 `xbrd.mem.service` |
@@ -131,7 +135,7 @@ A 复验后确认：**前两项是 modules root 布局差异，不是执行机�
 |---|---|---|
 | 工具页 / WebBridge `command.invoke` / `ui/tool.json` commands | **可用** | 上表第 1 行；A 用 `--surface-activation` 打开两个 Tab 并截图（sources Tab 渲染 9 行来源 + 面板数据预览卡） |
 | `commands.index.json` 静态索引 + 包级 `validate contracts` | **可用** | `validate contracts` → `commands=7`；在**装了本包的 modules root**（开发版 `%LOCALAPPDATA%\Programs\MyPowerTools`）下 `mpt run xbrd.health` → `succeeded: HTTP 200 {"ok":true,...,"source_count":9,...}` exit 0 |
-| `mpt run` / `mpt module list` 在**仓库 `F:\repo\MyPowerTools\modules`** 下 | **不可用，但原因是布局** | 该目录里没有 xbrd 包（`build-all-tools.ps1 -ToolId xbrd` 从未把包 materialize 到那里）：`run xbrd.health` → `failed: Command 'xbrd.health' was not found.` exit 1，`module list` 无 xbrd（A 原样复现 V 的输出；V 未记录所用 modules root）。开发版布局下 `module list` 显示 `xbrd enabled stopped`（对比 screenshot/screenease 的 `enabled indexed`） |
+| `mpt run` / `mpt module list` 在**仓库 `<MyPowerTools-checkout>\modules`** 下 | **不可用，但原因是布局** | 该目录里没有 xbrd 包（`build-all-tools.ps1 -ToolId xbrd` 从未把包 materialize 到那里）：`run xbrd.health` → `failed: Command 'xbrd.health' was not found.` exit 1，`module list` 无 xbrd（A 原样复现 V 的输出；V 未记录所用 modules root）。开发版布局下 `module list` 显示 `xbrd enabled stopped`（对比 screenshot/screenease 的 `enabled indexed`） |
 | Shell 命令面板里是否出现/可执行 xbrd 命令 | **UNCERTAIN（未实测）** | 调色板读 Runner 命令索引，而该索引在开发版布局下**包含**静态索引命令（`mpt run` 已证）；Shell UI 是否展示、点击后走哪条执行路径需实测，不得据此断言 |
 | `state\modules\xbrd` 目录 | **不存在（符合预期）** | `CreateModuleContext`（`MptHostRuntime.cs:1588-1590`）只为有**运行时入口**（inproc-dotnet / jsonrpc-stdio / grpc-ipc / package-runtime）的模块创建；`kind: http` facade 不算运行时入口 |
 
@@ -175,7 +179,7 @@ Surface 按钮实现，归属 B：
   "workingDirectory": "",
   "environment": {
     "MPT_TOOL_DATA_ROOT": "%LOCALAPPDATA%/MyPowerTools/state/tools/xbrd",
-    "XBRD_PUBLISHER": "http://ow.lixinrui000.cn:8080",
+    "XBRD_PUBLISHER": "http://publisher.example.invalid:8080",
     "XBRD_MEM_INTERVAL_SECONDS": "300"
   },
   "autostart": true,
@@ -200,7 +204,7 @@ Surface 按钮实现，归属 B：
   "workingDirectory": "",
   "environment": {
     "MPT_TOOL_DATA_ROOT": "%LOCALAPPDATA%/MyPowerTools/state/tools/xbrd",
-    "XBRD_PUBLISHER": "http://ow.lixinrui000.cn:8080",
+    "XBRD_PUBLISHER": "http://publisher.example.invalid:8080",
     "XBRD_CODEX_INTERVAL_SECONDS": "300"
   },
   "autostart": true,
@@ -276,6 +280,27 @@ JSON 心跳回报；降级原因写日志。冻结的确切文件名（C 实现�
 tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:true, status:"disabled"}`
 且**不改动路由器上的快照**。
 
+**设置联通补充（2026-10-18，云端回归；未安装验收）**：两个驻留发布者在每次周期 tick 或
+手动触发开始时重新读取模块根 `settings.json` 的 `publisherUrl`、对应来源的 enable / interval。
+路径优先级：`XBRD_SETTINGS_FILE` 显式覆盖 → `MPT_INSTALL_ROOT/modules/xbrd/settings.json` →
+可识别的 `<install>/service-units/<unit>/bin` 安装布局。路径不依赖 ServiceManager 的工作目录。
+有效设置值优先于 manifest 的环境默认值；没有设置文件的独立部署保留现有环境变量回退。
+间隔仍至少 5 秒；超长间隔按 .NET 支持的最大定时器时长分段等待，不改变配置的发布周期，
+也不另加频繁轮询。JSON 未写完、不可读或相关字段无效时，原驻留进程保留上次有效
+配置；缺少的字段也保留原值，不能因临时写入失败重新启用已停用来源。唯一的保守例外是已完整解析的
+JSON 对象中合法的显式 `false`：即使 URL/interval 同时无效，也必须先停用并保留其他最近有效值；
+`true` 仍须整个相关更新验证通过后生效。新进程无可读配置时仍使用
+环境默认值。密钥行为不变：`routerToken` 的 Secret Store 联通尚未完成，未增加任何密钥读取。
+
+服务与 Surface 都按 `MPT_TOOL_DATA_ROOT` → `MPT_DATA_ROOT/state/tools/xbrd` → 当前用户
+LocalApplicationData 下的 `MyPowerTools/state/tools/xbrd` 解析工具数据根，兼容隔离的数据目录。
+Surface 先检查对应 unit 的工具根 JSON 心跳；`control=trigger-file` 时只触碰该来源的规范文件，
+不请求被其他进程占用的 HTTP 端口。心跳必须属于该 unit，并在发布间隔 + 30 秒内；为防止损坏
+间隔允许多年旧心跳，触发许可最大年龄限制为 24 小时 + 30 秒。写入并 flush 成功只表示
+`status=trigger-queued`（本地展示状态，不是发布器快照状态），显示“已排队、尚未确认发布”；
+不能把触发请求当作发布成功。最终结果仍以 unit 后续心跳为准。过期/无效心跳、取消或文件写入失败
+不会报告排队成功。Surface 刷新来源行时保留待处理展示状态。
+
 **实现细节与边界（C2，C 实现并实测）**
 
 - 发布者唯一：周期 tick 与 `publish-now` 走**同一个循环**，控制端点只“请求再跑一轮”，因此二者
@@ -320,14 +345,14 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 
 各来源的**已知生产者清单**（2026-09-22 路由器容器访问日志实测）：
 
-| 来源 | 生产者 | 来源 IP / UA |
+| 来源 | 生产者 | 来源地址角色 / UA |
 |---|---|---|
-| `quota.mem` | `xbrd.mem.service`（**唯一生产者**） | 本机 `10.33.0.145` · `Go-http-client/1.1` |
-| `quota.codex` | `xbrd.codex-quota.service` **+ 已知第二生产者**（VMware 虚机 ubuntu，MAC `00:0c:29:c7:f0:91`） | 本机 `10.33.0.145` · `Go-http-client/1.1`；VM `10.33.0.171` |
-| `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | 路由器 cron | `192.168.29.79` |
-| `quota.proxy` / `quota.mes` | UI Quota Worker（本机；计划任务**每日 03:30**，`-EveryHours 3\|4\|6` 为可选加密频率开关，默认不变） | `10.33.0.145` · `Python-urllib/3.12` |
+| `quota.mem` | `xbrd.mem.service`（**唯一生产者**） | 本机 `<local-producer-address>` · `Go-http-client/1.1` |
+| `quota.codex` | `xbrd.codex-quota.service` **+ 已知第二生产者**（独立 VM） | 本机 `<local-producer-address>` · `Go-http-client/1.1`；VM `<codex-vm-address>` |
+| `quota.glm` / `quota.deepseek` / `quota.lab` / `weather.minhang` | 路由器 cron | `<router-cron-address>` |
+| `quota.proxy` / `quota.mes` | UI Quota Worker（本机；计划任务**每日 03:30**，`-EveryHours 3\|4\|6` 为可选加密频率开关，默认不变） | `<local-producer-address>` · `Python-urllib/3.12` |
 
-实测计数（同一 24h 窗口）：`quota.codex` 的写入 = 18 × `10.33.0.171` + 3 × `10.33.0.145`。
+实测计数（同一 24h 窗口）：`quota.codex` 的写入 = 18 × `<codex-vm-address>` + 3 × `<local-producer-address>`。
 
 **`quota.codex` 的离栅发布是已知现象、不是故障**：那台 VM 会继续直接向发布器投递
 `quota.codex`（**用户已明确决定保留**，处理与后续见第 8 节第 5 条、第 9 节第 15 条）。
@@ -391,12 +416,12 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 
 ### 6.3 手机端取数：候选地址链（2026-09-22 定稿，D 实现并真机验证）
 
-背景：用户要求手机 App 改读 `http://ow.tail.lixinrui000.cn/` 以便外网（Tailscale）可用；
+背景：用户要求手机 App 改读 `http://tailnet-publisher.example.invalid/` 以便外网（Tailscale）可用；
 但 11 台测试手机**都没装 Tailscale**，tailnet `100.64.0.0/10` 对纯 LAN 客户端不可达，
 **单纯换默认地址会让「家里没装 Tailscale 的手机也读不到」**。因此改为**候选地址链**。
 
 1. **原生平台（Android app + 桌面小组件）候选链**：
-   `http://ow.tail.lixinrui000.cn/panel.json`（tailnet）→ `http://ow.lixinrui000.cn:8080/panel.json`（LAN），
+   `http://tailnet-publisher.example.invalid/panel.json`（tailnet）→ `http://publisher.example.invalid:8080/panel.json`（LAN），
    **逐个尝试、首个成功者生效**。**last-known-good 持久化**：app 与小组件共用同一份
    SharedPreferences（`xbrd_quota_widget` / `panel_source_url`），下次**优先试它**
    （实测 warm **2.7s** vs cold **9.2s**——避免每次白付一次 6s 超时）。
@@ -406,8 +431,8 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
    `?panel=` → `window.__XBRD_PANEL_URL__` → 同源相对 `panel.json` → `DEFAULT_PANEL_URL`；
    `DEFAULT_PANEL_URL` 现指 tailnet。
 4. **Android 明文策略**：`network_security_config.xml` 的 `base-config` 仍是
-   `cleartextTrafficPermitted="false"`，白名单**同时**包含 `ow.tail.lixinrui000.cn` 与
-   `ow.lixinrui000.cn`（两条各有用途注释）。**新增域名必须同步加白名单**，否则报
+   `cleartextTrafficPermitted="false"`，白名单**同时**包含 `tailnet-publisher.example.invalid` 与
+   `publisher.example.invalid`（两条各有用途注释）。**新增域名必须同步加白名单**，否则报
    `CLEARTEXT communication ... not permitted`。
 5. **版本与脚本**：`apps/quota-universal` 现为 **1.0.5 / versionCode 6**；
    `scripts/xbrd-build-install-quota-app.ps1` 的两个既有问题已修：USB 序列号不再误走 `adb connect`；
@@ -429,7 +454,7 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
 
 ## 8. 验收标准（v1）
 
-1. `pwsh -File build.ps1 -MyPowerToolsRepoRoot F:\repo\MyPowerTools` 退出码 0，`artifacts/package` 就位。
+1. `pwsh -File build.ps1 -MyPowerToolsRepoRoot "<MyPowerTools-checkout>"` 退出码 0，`artifacts/package` 就位。
 2. `Start-MyPowerTools-Dev.ps1 -Scope Tools -ToolId xbrd` 成功，开发版 Shell 启动。
 3. 工具卡片出现；`panel` Tab 内嵌路由器 `/panel-app/`，渲染的是**复用手机端 `quota-universal` 的配额
    UI**——验收看 hero(codex) + tiles(DS/LAB/TAG/MES) + strip(MEM)，**不是** `{"schema":"xbrd.panel.v1"...}`
@@ -439,12 +464,12 @@ tick 或 `publish-now` 生效。此时 `publish-now` 返回 `{ok:true, skipped:t
    `%LOCALAPPDATA%\MyPowerTools\state\<unitId>.heartbeat` 两份单行小文件存在并随 tick 前进。
 5. `GET /api/v1/sources` 显示 `quota.mem`、`quota.codex` 的 `age_s` 由两个 unit 的 tick 驱动
    （旧生产者已于 2026-09-22 17:2x 由 Lead 停用，见 README「迁移注意」）。
-   **但 `quota.codex` 另有一个已知第二生产者（VM `10.33.0.171`，用户决定保留，见第 9 节第 15 条）**：
+   **但 `quota.codex` 另有一个已知第二生产者（VM `<codex-vm-address>`，用户决定保留，见第 9 节第 15 条）**：
    - 因此 **「单生产者」不是 `quota.codex` 的验收判据**——它的 `age_s`/`revision` 可能由那台 VM
      的投递而前进，甚至出现「本机 unit 没发布但 age 归零」；
    - **离栅发布 = 预期现象，不是故障、不算 FAIL**；排障/核对时用
      `producer.remote_addr` / `producer.user_agent`（第 6.1 节「写入方溯源」）判定写入方；
-   - `quota.mem` 仍要求**单生产者**（唯一生产者是 `xbrd.mem.service`，IP `10.33.0.145`）；
+   - `quota.mem` 仍要求**单生产者**（唯一生产者是 `xbrd.mem.service`，IP `<local-producer-address>`）；
      若 `quota.mem` 出现其它 `producer.remote_addr`，按故障处理。
 6. 仓库内无明文密钥；`routerToken` 走 MPT Secret Store。
 7. （2026-09 追加，A）包必须通过官方校验，两条都退出码 0：
@@ -461,7 +486,7 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
 8. （2026-09-22，V 实测 + A 复验）命令可达性以第 4 节表为准：
    - 工具页 / WebBridge / `mpt run`（**在含本包的 modules root 下**）/ `validate contracts` 都已通过；
-   - 在仓库 `F:\repo\MyPowerTools\modules` 下 `mpt run xbrd.health` 失败是**布局问题**（那里没有 xbrd 包），
+   - 在仓库 `<MyPowerTools-checkout>\modules` 下 `mpt run xbrd.health` 失败是**布局问题**（那里没有 xbrd 包），
      验收时不要用它判定命令实现；
    - **Shell 命令面板是否展示 xbrd 命令 = UNCERTAIN（未实测）**，不得断言可用或不可用；
    - `state\modules\xbrd` / transport `indexed` 对本工具**不是**验收条件。
@@ -483,7 +508,7 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
 1. **`module.json.entrypoints` 不能为空**（`module.schema.json` 要求 `minItems: 1`）。
    xbrd 没有本机模块运行时，声明路由器发布器 HTTP facade：
-   `{ "kind": "http", "priority": 80, "baseUrl": "http://ow.lixinrui000.cn:8080", "health": { "path": "/health" } }`。
+   `{ "kind": "http", "priority": 80, "baseUrl": "http://publisher.example.invalid:8080", "health": { "path": "/health" } }`。
    `runtimePolicy.preferred = "service"` 与 `TransportSelector.PolicyCategory`（http → service）一致。
    Runner 的 `HealthMonitor` 会对 `baseUrl + /health` 做健康检查，因此工具卡状态反映发布器可达性。
 2. **`baseUrl` 是静态字面量**：模块清单没有 `${settings.*}` 展开机制。发布器地址变更时必须同时改
@@ -561,7 +586,7 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 11. **面板 Tab（复用手机端 quota-universal UI）的托管形态：(i) 路由器静态托管——已采用（2026-09-22）**。
     背景：手机端 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，
     用户裁定复用；D 完成 web 导出并部署到路由器 `/panel-app/`（A 实测
-    `GET http://ow.lixinrui000.cn:8080/panel-app/` 与 `http://10.33.0.1:8080/panel-app/` 均 200
+    通过部署配置的发布器域名入口与路由器 LAN 地址入口请求 `GET /panel-app/` 均 200
     `text/html`），因此采用 (i)，MPT 侧零新增服务。下表保留两种形态的参数，**(ii) 未采用**，
     仅作为「路由器不可用/需要离线页面」时的备选（其完整改动清单见下）。
 
@@ -655,12 +680,8 @@ artifacts\sdk\cli\MyPowerTools.Cli.exe validate contracts tools\xbrd\artifacts\p
 
 15. **已知第二生产者：`quota.codex`（2026-09-22 定案，用户决定保留）**。
     V 的最终验收把两笔「离栅发布」判为 FAIL，D 用路由器容器访问日志定案：
-    ```
-    2026-09-22T12:36:37.597Z  10.33.0.171  POST /api/v1/sources/quota.codex/snapshot  200
-    2026-09-22T12:49:01.464Z  10.33.0.171  同上
-    2026-09-22T12:53:07.901Z  10.33.0.171  同上
-    写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:29:c7:f0:91）｜3 × 10.33.0.145（本机）
-    ```
+    脱敏日志结论：已保留的第二生产者 VM 多次向 `POST /api/v1/sources/quota.codex/snapshot`
+    投递并返回 200；同一 24h 观察窗口中，VM 写入 18 次，本机 unit 写入 3 次。
     **处置：保留，按「已知第二生产者」对待**（不判 FAIL、不改本工具、不停那台 VM）。
     - 影响面：`quota.codex` 的 `age_s`/`revision` 可能由该 VM 驱动 → 第 8 节第 5/9 条已相应改写
       （「单生产者」不再是 `quota.codex` 的判据；`quota.mem` 仍要求单生产者）。

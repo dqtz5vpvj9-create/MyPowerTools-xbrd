@@ -1,8 +1,12 @@
 # xbrd (MyPowerTools tool)
 
+部署示例约定：`*.example.invalid`、`<MyPowerTools-checkout>`、`<esp32-screen-checkout>`
+与 `<...-address>` 均为文档占位符，使用前须替换为部署配置。占位符不代表运行时默认值；
+实际配置见随包设置、schema 与源代码。本次仅整理文档，未修改其中的现有默认配置。
+
 XBRD 圆屏的 MyPowerTools 集成：一个工具、两个 Tab。
 
-- **面板**：内嵌路由器 **`/panel-app/`**（`source = ${settings.publisherUrl}/panel-app/`，Web Surface）——**复用手机端配额 UI**：手机端 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，D 已把它的 web 导出部署到路由器 `/panel-app/`，MPT 侧零新增服务。验收看 hero=codex、tiles=DS/LAB/TAG/MES、strip=MEM，**不是** `{"schema":"xbrd.panel.v1"...}` 原始 JSON。`settings.panelUrl`（默认 `http://ow.lixinrui000.cn:8080/panel.json`）是**原始数据入口**（Open externally / 原始数据 / sources Tab 的「面板数据预览」诊断），**不再是面板 Tab 的 source**。路由器不可达时由 MPT 显示恢复页（Try again / Open externally）。备选方案 (ii)「本地 `http://127.0.0.1:19224/` + `xbrd.panel.service`」未采用，参数与清单保留在 [CONTRACT.md](CONTRACT.md) 第 9 节第 11 条。
+- **面板**：内嵌路由器 **`/panel-app/`**（`source = ${settings.publisherUrl}/panel-app/`，Web Surface）——**复用手机端配额 UI**：手机端 `apps/quota-universal`（Expo/RN + react-native-web）渲染的就是同一份 `xbrd.panel.v1`，D 已把它的 web 导出部署到路由器 `/panel-app/`，MPT 侧零新增服务。验收看 hero=codex、tiles=DS/LAB/TAG/MES、strip=MEM，**不是** `{"schema":"xbrd.panel.v1"...}` 原始 JSON。`settings.panelUrl`（部署占位示例 `http://publisher.example.invalid:8080/panel.json`）是**原始数据入口**（Open externally / 原始数据 / sources Tab 的「面板数据预览」诊断），**不再是面板 Tab 的 source**。路由器不可达时由 MPT 显示恢复页（Try again / Open externally）。备选方案 (ii)「本地 `http://127.0.0.1:19224/` + `xbrd.panel.service`」未采用，参数与清单保留在 [CONTRACT.md](CONTRACT.md) 第 9 节第 11 条。
 - **来源与配额**：9 个信息来源的状态/TTL 健康、采集器状态、两个常驻服务（原生 dotnet Surface）。
 
 接口冻结见 [CONTRACT.md](CONTRACT.md)。字段名/契约改动必须先改 CONTRACT.md。
@@ -38,7 +42,7 @@ artifacts/package/                               # build.ps1 生成，dev overla
    `../settings.json` / `../settings.schema.json` 引用（ToolRegistry 相对 tool.json 所在目录解析）。
 2. **`module.json` 的 `entrypoints` 不能为空**（`module.schema.json` 要求 `minItems: 1`）。
    本工具没有本机模块运行时，诚实的声明是路由器发布器 HTTP facade：
-   `{ "kind": "http", "priority": 80, "baseUrl": "http://ow.lixinrui000.cn:8080", "health": { "path": "/health" } }`。
+   `{ "kind": "http", "priority": 80, "baseUrl": "http://publisher.example.invalid:8080", "health": { "path": "/health" } }`。
    Runner 会据此做 `/health` 健康检查（工具卡状态由此变为 running/degraded），
    并让 `commands.index.json` 里的 `execution.type = "http.request"` 命令真正可执行。
 3. **`baseUrl` 是静态的**：`settings.publisherUrl` 改了以后要同步改 `module.json` 的 `baseUrl`，
@@ -48,7 +52,7 @@ artifacts/package/                               # build.ps1 生成，dev overla
 
 ```powershell
 pwsh.exe -NoLogo -NoProfile -NonInteractive -File .\build.ps1 `
-  -MyPowerToolsRepoRoot F:\repo\MyPowerTools
+  -MyPowerToolsRepoRoot "<MyPowerTools-checkout>"
 ```
 
 退出码 0 即 `artifacts/package` 就位。`build.ps1` 会顺带自检（type/runtime/命令 id/命令是否进索引/
@@ -193,7 +197,7 @@ Unable to cast object of type 'System.Double' to type 'Avalonia.Thickness'.
   - `commands.index.json` 静态索引 + 包级 `validate contracts`：**可用**（`commands=7`）；
     在**含本包的 modules root**（开发版安装布局）下 `mpt run xbrd.health` 返回
     `succeeded: HTTP 200 {...source_count:9...}`（当时 `plan.smoke` 还在；它注销后为 `source_count:8`）；
-    但在仓库 `F:\repo\MyPowerTools\modules` 下会报
+    但在仓库 `<MyPowerTools-checkout>\modules` 下会报
     `Command 'xbrd.health' was not found.`——那是该目录**没有 xbrd 包**（`build-all-tools.ps1 -ToolId xbrd`
     没跑过），不是命令实现有问题；
   - **Shell 命令面板里是否出现/可执行这两条命令 = UNCERTAIN（未实测）**；
@@ -270,25 +274,21 @@ Disable-ScheduledTask -TaskName 'XBRD Codex Quota Trigger' -TaskPath '\'
 
 V 的最终验收把两笔离栅发布判为 FAIL，D 用路由器容器访问日志定案（2026-09-22）：
 
-```
-2026-09-22T12:36:37.597Z  10.33.0.171  POST /api/v1/sources/quota.codex/snapshot  200
-2026-09-22T12:49:01.464Z  10.33.0.171  同上
-2026-09-22T12:53:07.901Z  10.33.0.171  同上
-quota.codex 写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:29:c7:f0:91）｜3 × 10.33.0.145（本机）
-```
+脱敏日志结论：已保留的第二生产者 VM 多次向 `POST /api/v1/sources/quota.codex/snapshot`
+投递并返回 200；同一 24h 观察窗口中，VM 写入 18 次，本机 unit 写入 3 次。
 
 **结论：保留那台 VM，按「已知第二生产者」处理**（不判 FAIL、不改本工具、不停 VM）。因此：
 
 - **「单生产者」不是 `quota.codex` 的验收判据**；`quota.codex` 的 `age_s`/`revision` 可能由 VM 驱动，
   「本机没发布但 age 归零」是**预期现象，不是故障**。
-- `quota.mem` 仍要求单生产者（唯一生产者 `xbrd.mem.service`，`10.33.0.145`）；
+- `quota.mem` 仍要求单生产者（唯一生产者 `xbrd.mem.service`，`<local-producer-address>`）；
   若它出现别的 `producer.remote_addr`，按故障处理。
 - 排障一律先看发布器新增的 **写入方溯源** `producer.remote_addr` / `producer.user_agent`
   （`GET /api/v1/sources` 与 `/api/v1/sources/<id>` 都带，纯增量）；明细见 CONTRACT §6.1、§8.5/§8.9、§9.15。
 
-已知生产者清单：`quota.mem` = 本机 unit `10.33.0.145` + `Go-http-client/1.1`（唯一）；
-`quota.codex` = 本机 unit 同上 + VM `10.33.0.171`；路由器 cron 四源 = `192.168.29.79`；
-`quota.proxy`/`quota.mes` = 本机 UI Quota Worker `10.33.0.145` + `Python-urllib/3.12`。
+已知生产者清单：`quota.mem` = 本机 unit `<local-producer-address>` + `Go-http-client/1.1`（唯一）；
+`quota.codex` = 本机 unit 同上 + VM `<codex-vm-address>`；路由器 cron 四源 = `<router-cron-address>`；
+`quota.proxy`/`quota.mes` = 本机 UI Quota Worker `<local-producer-address>` + `Python-urllib/3.12`。
 
 ### 生产者侧两条硬约束（LAB 修复中发现）
 
@@ -318,12 +318,12 @@ quota.codex 写入计数：18 × 10.33.0.171（VMware 虚机 ubuntu，MAC 00:0c:
 
 #### 手机端取数：候选地址链（2026-09-22 定稿）
 
-用户要求手机 App 改读 `http://ow.tail.lixinrui000.cn/` 以便外网（Tailscale）可用，但 11 台测试手机
+用户要求手机 App 改读 `http://tailnet-publisher.example.invalid/` 以便外网（Tailscale）可用，但 11 台测试手机
 **都没装 Tailscale**，tailnet `100.64.0.0/10` 对纯 LAN 客户端不可达——**单纯换默认地址会让家里没装
 Tailscale 的手机也读不到**。故改为候选链（D 已实现并真机验证）：
 
-- **Android app + 桌面小组件**：`http://ow.tail.lixinrui000.cn/panel.json`（tailnet）→
-  `http://ow.lixinrui000.cn:8080/panel.json`（LAN），逐个尝试、**首个成功者生效**；
+- **Android app + 桌面小组件**：`http://tailnet-publisher.example.invalid/panel.json`（tailnet）→
+  `http://publisher.example.invalid:8080/panel.json`（LAN），逐个尝试、**首个成功者生效**；
   **last-known-good** 存在共用 SharedPreferences（`xbrd_quota_widget` / `panel_source_url`），
   下次优先试它（实测 warm **2.7s** vs cold **9.2s**，省掉每次的 6s 超时）。
 - **可诊断**：显示来源标签 `via tailnet` / `via lan`；全失败时错误逐条汇总
@@ -331,7 +331,7 @@ Tailscale 的手机也读不到**。故改为候选链（D 已实现并真机验
 - **Web 平台优先级不变**（task-6 冻结，本轮未改，**有意保持单地址**）；
   `DEFAULT_PANEL_URL` 现指 tailnet。
 - **Android 明文白名单**：`base-config` 仍 `cleartextTrafficPermitted="false"`，白名单同时含
-  `ow.tail.lixinrui000.cn` 与 `ow.lixinrui000.cn`；**新增域名必须同步加白名单**，否则报
+  `tailnet-publisher.example.invalid` 与 `publisher.example.invalid`；**新增域名必须同步加白名单**，否则报
   `CLEARTEXT communication ... not permitted`。
 - 版本：`apps/quota-universal` **1.0.5 / versionCode 6**；
   `scripts/xbrd-build-install-quota-app.ps1` 已修两处（USB 序列号不再误走 `adb connect`；
@@ -357,3 +357,23 @@ Tailscale 的手机也读不到**。故改为候选链（D 已实现并真机验
 - 遗留（非本工具范围）：`materialize-tool-submodules.ps1` 读 `bundleManifest.tools.id`，而
   `create-source-bundle.ps1` 写 `tools[].toolId`，且前者要求 bundle 内每个工具有 `original-source/`；
   该脚本与当前 bundle 生产者对不上，详见 CONTRACT.md 第 9 节第 6 条。
+
+## 驻留设置与回归（2026-10-18）
+
+两个来源服务现在在每次发布边界读取安装目录中的 `modules/xbrd/settings.json`，应用
+`publisherUrl`、`enableMemSource` / `enableCodexSource` 和各自 interval。
+`MPT_INSTALL_ROOT` 由安装脚本注入；独立部署可用 `XBRD_SETTINGS_FILE` 显式指定。
+有效文件设置优先于 manifest 的固定环境默认值；没有文件时保持旧环境配置行为。
+已有进程遇到正在写入、不完整、不可读或字段无效的文件，会保留最近一次有效配置。
+合法 JSON 中明确的 `false` 仍会停用来源，即使同时有无效 URL/interval；启用必须通过完整验证。
+这不会产生额外周期轮询；更改在下一个 tick 或手动触发生效，不会中断已经开始的发布。
+显式 `--dry-run` 仍保留原来的诊断采集行为（不发布）。
+
+Surface 在 unit 降级到触发文件时会验证心跳、持久写入规范触发文件，并诚实显示“已排队”而
+非“已发布”。心跳允许年龄为发布间隔加 30 秒，最多 24 小时加 30 秒；较旧的服务需要先确认
+仍在运行。Codex 失败快照的 error 统一限制为 127 个 UTF-8 字节，保持完整 Unicode 字符。
+
+回归入口：`tests/Xbrd.Runtime.Regression/Xbrd.Runtime.Regression.csproj`。
+可用 `--list` 枚举，正常运行执行断言；详情和基线提取方法见同目录 README。
+这批验证仅在云端用假采集器、假 HTTP 和隔离的临时文件执行，未启动已安装的服务或访问路由器。
+`routerToken` Secret Store 到服务/Surface 的连接以及静态 `module.json` entrypoint 地址问题仍待处理。

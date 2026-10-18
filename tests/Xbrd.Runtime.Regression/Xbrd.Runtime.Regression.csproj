@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <StartupObject>XbrdRegression.Tests</StartupObject>
+    <ProductionRoot Condition="'$(ProductionRoot)' == ''">../../current-integration/src</ProductionRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MyPowerTools.Platform.Abstractions" Version="0.2.0" />
+    <PackageReference Include="MyPowerTools.AvaloniaSdk" Version="0.2.0" />
+    <Compile Include="$(ProductionRoot)/Xbrd.Mem.Service/Program.cs" Link="Production/MemProgram.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.CodexQuota.Service/Program.cs" Link="Production/CodexProgram.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.CodexQuota.Service/QuotaResetMail.cs" Link="Production/QuotaResetMail.cs" Condition="Exists('$(ProductionRoot)/Xbrd.CodexQuota.Service/QuotaResetMail.cs')" />
+    <Compile Include="$(ProductionRoot)/Xbrd.ServiceCommon/XbrdServiceSettings.cs" Link="Production/Settings.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.ServiceCommon/ControlPlane.cs" Link="Production/ControlPlane.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.ServiceCommon/XbrdServiceLog.cs" Link="Production/ServiceLog.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.Surface/Services/XbrdUnitControlClient.cs" Link="Production/ControlClient.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.Surface/Services/XbrdControlModels.cs" Link="Production/ControlModels.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.Surface/ViewModels/XbrdSourceRowViewModel.cs" Link="Production/SourceRow.cs" />
+    <Compile Include="$(ProductionRoot)/Xbrd.Surface/Services/XbrdSourceModels.cs" Link="Production/SourceModels.cs" />
+  </ItemGroup>
+</Project>

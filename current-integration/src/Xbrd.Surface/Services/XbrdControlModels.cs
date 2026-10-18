@@ -127,13 +127,18 @@ public sealed record XbrdPublishNowResult(
     string Endpoint,
     bool Skipped = false)
 {
-    public string Text => Ok
-        ? Skipped
-            ? $"{SourceId} 已排队（unit 正在发布中）：revision={Revision} · status={Status}"
-            : $"{SourceId} 已发布：revision={Revision} · {DurationMs}ms · status={Status}"
-        : Error;
+    public string Text => !Ok ? Error : Status switch
+    {
+        "trigger-queued" => $"{SourceId} 触发请求已写入，等待 unit 处理；尚未确认发布。",
+        "disabled" => $"{SourceId} 已停用，未采集或发布。",
+        _ when Skipped => $"{SourceId} 已排队（unit 正在发布中）：revision={Revision} · status={Status}",
+        _ => $"{SourceId} 已发布：revision={Revision} · {DurationMs}ms · status={Status}"
+    };
 
-    public string DetailText => Ok
-        ? string.Create(CultureInfo.InvariantCulture, $"duration_ms={DurationMs} · status={Status} · revision={Revision}{(Skipped ? " · skipped=true（与周期 tick 互斥）" : "")}")
-        : Error;
+    public string DetailText => !Ok ? Error : Status switch
+    {
+        "trigger-queued" => $"status=trigger-queued · trigger={Endpoint} · 等待 unit 心跳确认结果",
+        "disabled" => "status=disabled · skipped=true · 来源已停用，未采集或发布",
+        _ => string.Create(CultureInfo.InvariantCulture, $"duration_ms={DurationMs} · status={Status} · revision={Revision}{(Skipped ? " · skipped=true（与周期 tick 互斥）" : "")}")
+    };
 }
