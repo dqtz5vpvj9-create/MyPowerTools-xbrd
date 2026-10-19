@@ -92,7 +92,7 @@ internal static class Tests
                 Environment.SetEnvironmentVariable("MPT_TOOL_DATA_ROOT", null);
                 var program = source == "mem" ? typeof(Mem) : typeof(Codex);
                 var resolve = program.GetMethod("ResolveDataRoot", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-                // Assert before running so the failing baseline never writes outside the fixture.
+                // Assert before running so a regression never writes outside the fixture.
                 Equal(fixture.DataRoot, (string)resolve.Invoke(null, null)!, "resolved service data root");
                 fixture.Settings(false, 300);
                 await fixture.RunOnce();
