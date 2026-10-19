@@ -14,14 +14,9 @@ are isolated and removed. The test compiles against the real Platform.Abstractio
 SDK packages, not replacement implementations. The real source-row presenter is also
 linked; its owner is a throw-on-action test stand-in so no UI or HostControl is created.
 
-To demonstrate the baseline failures, `python3 prepare_baseline.py <scratch-path>`
-extracts pinned revision `f39e43cf46f243e43f18781f9db3b870bdd32be0` and applies the
-same internal dependency-injection seams (HTTP handler, collectors and cancellation).
-It also normalizes the two historical control copies into the shared namespace after
-asserting they are identical; the control and ASCII formatter retain old behavior.
-Run with `-p:ProductionRoot=<scratch-path>` and a clean build when switching roots.
-The baseline has no settings integration, UTF-8 payload bound or trigger-file Surface
-path. Only the shared settings reader remains unused; no test calls it directly.
+The one-off baseline rewriter and comparison instructions remain available in
+[commit 25d67d0](https://github.com/dqtz5vpvj9-create/MyPowerTools-xbrd/tree/25d67d08bfd31bc65a4dffd606246f3c2416afa2/tests/Xbrd.Runtime.Regression).
+The maintained suite compiles the current production sources directly.
 
 A harness pass does not establish native Windows/macOS UI, installation, service
 supervision, production SDK runtime loading or backend integration acceptance.
