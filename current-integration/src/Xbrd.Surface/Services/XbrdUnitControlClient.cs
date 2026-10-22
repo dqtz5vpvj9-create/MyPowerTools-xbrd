@@ -102,7 +102,8 @@ public sealed class XbrdUnitControlClient : IDisposable
                 return new XbrdPublishNowResult(false, sourceId, "", 0, "", $"unit 控制端点响应不是 JSON（HTTP {status}）。", endpoint);
             }
 
-            var ok = XbrdJson.ReadBool(root, "ok", status is >= 200 and < 300);
+            var httpOk = status is >= 200 and < 300;
+            var ok = httpOk && XbrdJson.ReadBool(root, "ok", true);
             if (!ok)
             {
                 var error = XbrdJson.ReadString(root, "error");
@@ -112,7 +113,7 @@ public sealed class XbrdUnitControlClient : IDisposable
                     XbrdJson.ReadString(root, "revision"),
                     XbrdJson.ReadLong(root, "duration_ms"),
                     XbrdJson.ReadString(root, "status"),
-                    error.Length > 0 ? error : $"unit 报告 ok=false（HTTP {status}）。",
+                    error.Length > 0 ? error : httpOk ? $"unit 报告 ok=false（HTTP {status}）。" : $"unit 控制请求失败（HTTP {status}）。",
                     endpoint);
             }
 

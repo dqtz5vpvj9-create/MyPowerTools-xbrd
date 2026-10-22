@@ -100,6 +100,11 @@ public sealed class XbrdPublisherClient : IDisposable
                 return XbrdSourceLogResult.Failed(sourceId, $"路由器端点 404：该来源没有日志能力（{endpoint}）", status);
             }
 
+            if (status is < 200 or >= 300)
+            {
+                return XbrdSourceLogResult.Failed(sourceId, $"日志请求失败（HTTP {status}）。", status);
+            }
+
             var root = ParseObject(body);
             if (root is null)
             {
@@ -187,7 +192,8 @@ public sealed class XbrdPublisherClient : IDisposable
                     Truncate(body));
             }
 
-            var ok = XbrdJson.ReadBool(root, "ok", status is >= 200 and < 300);
+            var httpOk = status is >= 200 and < 300;
+            var ok = httpOk && XbrdJson.ReadBool(root, "ok", true);
             var error = XbrdJson.ReadString(root, "error");
             var durationMs = XbrdJson.ReadLong(root, "duration_ms", elapsed);
             int? exitCode = root["exit_code"] is null ? null : XbrdJson.ReadInt(root, "exit_code");
@@ -198,7 +204,7 @@ public sealed class XbrdPublisherClient : IDisposable
                 ? $"{action} 完成"
                 : error.Length > 0
                     ? error
-                    : $"发布器返回 ok=false（HTTP {status}）。";
+                    : httpOk ? $"发布器返回 ok=false（HTTP {status}）。" : $"控制请求失败（HTTP {status}）。";
 
             return new XbrdControlResult(
                 action,

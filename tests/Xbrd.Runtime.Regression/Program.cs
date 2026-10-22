@@ -209,6 +209,29 @@ internal static class Tests
             Check(!File.Exists(fixture.TriggerPath), "cancelled trigger not created");
             Equal(0, fixture.Http.Requests.Count, "cancelled HTTP not issued");
         });
+        await Case("control: HTTP failure cannot report JSON success", async () =>
+        {
+            using var fixture = new Fixture("mem");
+            fixture.Http.StatusCode = HttpStatusCode.InternalServerError;
+            fixture.Http.ControlResponse = "{\"ok\":true}";
+            using var client = new XbrdUnitControlClient(TimeSpan.FromSeconds(1), fixture.Http, fixture.DataRoot);
+            var result = await client.PublishNowAsync("quota.mem", CancellationToken.None);
+            Check(!result.Ok, "HTTP failure must remain a failure");
+        });
+        await Case("publisher: HTTP failure overrides successful control and log JSON", async () =>
+        {
+            using var handler = new FakeHttp
+            {
+                StatusCode = HttpStatusCode.InternalServerError,
+                PublisherResponse = "{\"ok\":true,\"lines\":[]}"
+            };
+            using var client = new XbrdPublisherClient(TimeSpan.FromSeconds(1), handler);
+            var control = await client.RefreshSourceAsync("http://publisher.invalid", "quota.mem", CancellationToken.None);
+            Check(!control.Ok, "failed HTTP control");
+            var log = await client.GetSourceLogAsync("http://publisher.invalid", "quota.mem", 10, CancellationToken.None);
+            Check(!log.Ok, "failed HTTP log");
+            Equal(500, log.HttpStatus, "preserved HTTP status");
+        });
         await Case("control: ordinary HTTP disabled response is truthful", async () =>
         {
             using var fixture = new Fixture("mem");
@@ -388,14 +411,16 @@ internal static class Tests
     internal sealed class FakeHttp : HttpMessageHandler
     {
         public List<(string Uri, string Body)> Requests { get; } = new();
+        public HttpStatusCode StatusCode = HttpStatusCode.OK;
+        public string PublisherResponse = "{\"accepted\":true}";
         public string ControlResponse = "{\"ok\":false,\"error\":\"test-only unavailable control endpoint\"}";
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add((request.RequestUri!.ToString(), request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken)));
-            return new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(StatusCode)
             {
-                Content = new StringContent(request.RequestUri.AbsolutePath == "/publish-now" ? ControlResponse : "{\"accepted\":true}")
+                Content = new StringContent(request.RequestUri.AbsolutePath == "/publish-now" ? ControlResponse : PublisherResponse)
             };
         }
     }
